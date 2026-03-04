@@ -1,5 +1,9 @@
 package models
 
+import (
+	"time"
+)
+
 // ============================================================================
 // CONTENT & MEDIA MODELS
 // ============================================================================
@@ -147,4 +151,108 @@ type TmdbSearchResult struct {
 
 type TmdbMovieImdbId struct {
 	ImdbId string `json:"imdb_id"`
+}
+type TMDBMovieRaw struct {
+	ID          int     `json:"id"`
+	Title       string  `json:"title"`
+	PosterPath  string  `json:"poster_path"`
+	ReleaseDate string  `json:"release_date"`
+	GenreIDs    []int   `json:"genre_ids"`
+	VoteAverage float64 `json:"vote_average"`
+}
+
+type TMDBResponse struct {
+	Results []TMDBMovieRaw `json:"results"`
+}
+
+type TMDBTrendingMovieRaw struct {
+	ID          int     `json:"id"`
+	Title       string  `json:"title"`
+	PosterPath  string  `json:"poster_path"`
+	ReleaseDate string  `json:"release_date"`
+	GenreIDs    []int   `json:"genre_ids"`
+	VoteAverage float64 `json:"vote_average"`
+}
+
+type TMDBTrendingResponse struct {
+	Page         int                    `json:"page"`
+	Results      []TMDBTrendingMovieRaw `json:"results"`
+	TotalPages   int                    `json:"total_pages"`
+	TotalResults int                    `json:"total_results"`
+}
+
+type TMDBDiscoverResponse struct {
+	Page         int            `json:"page"`
+	Results      []TMDBMovieRaw `json:"results"`
+	TotalPages   int            `json:"total_pages"`
+	TotalResults int            `json:"total_results"`
+}
+
+type SearchMoviesParams struct {
+	BearerToken string
+	Query       string // optionnel
+	GenresCSV   string // "28,12"
+	YearsCSV    string // "2021,2022,2023"
+	SortBy      string
+	Page        int
+	Language    string
+	Rating      float64
+}
+type FetchParams struct {
+	BearerToken string
+	Query       string
+	Genre       string
+	Year        int
+	SortBy      string
+	Page        int
+	Language    string
+	HasQuery    bool
+	HasGenres   bool
+}
+type CachedSearch struct {
+	Results   []TMDBMovieRaw
+	ExpiresAt time.Time
+}
+type TMDBGenre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type TMDBGenreMovieListResponse struct {
+	Genres []TMDBGenre `json:"genres"`
+}
+
+type CategoryDTO struct {
+	ID           int      `json:"id"`
+	CategoryName string   `json:"categoryName"`
+	Description  string   `json:"description"`
+	Href         string   `json:"href"`
+	Color        string   `json:"color"`
+	Previews     []string `json:"previews,omitempty"`
+}
+type TMDBTrendingTVResponse struct {
+	Page    int             `json:"page"`
+	Results []TMDBTVRawItem `json:"results"`
+}
+
+type TMDBTVRawItem struct {
+	ID               int      `json:"id"`
+	Name             string   `json:"name"`
+	FirstAirDate     string   `json:"first_air_date"`
+	GenreIDs         []int    `json:"genre_ids"`
+	PosterPath       string   `json:"poster_path"`
+	VoteAverage      float64  `json:"vote_average"`
+	OriginalLanguage string   `json:"original_language"`
+	OriginCountry    []string `json:"origin_country"`
+}
+
+type TVDTO struct {
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	Image    string   `json:"image"`
+	Year     int      `json:"year"`
+	Genres   []string `json:"genres"`
+	Rating   float64  `json:"rating"`
+	Language string   `json:"language"`
+	Country  []string `json:"country"`
 }

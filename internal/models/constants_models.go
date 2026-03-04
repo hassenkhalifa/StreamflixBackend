@@ -1,5 +1,10 @@
 package models
 
+import (
+	"sync"
+	"time"
+)
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -135,4 +140,30 @@ var TVGenreMap = map[int]string{
 	10767: "Talk-show",
 	10768: "Guerre & Politique",
 	37:    "Western",
+}
+var (
+	SearchCache = make(map[string]CachedSearch)
+	CacheMutex  sync.RWMutex
+	CacheTTL    = 5 * time.Minute
+)
+var GenreCategoryColor = map[string]string{
+	"Action":          "from-red-600 to-red-800",
+	"Aventure":        "from-orange-500 to-amber-600",
+	"Animation":       "from-pink-500 to-fuchsia-600",
+	"Comédie":         "from-yellow-400 to-amber-500",
+	"Crime":           "from-slate-700 to-slate-900",
+	"Documentaire":    "from-blue-500 to-sky-600",
+	"Drame":           "from-indigo-600 to-indigo-800",
+	"Familial":        "from-lime-400 to-green-500",
+	"Fantastique":     "from-purple-500 to-violet-700",
+	"Histoire":        "from-amber-600 to-yellow-800",
+	"Horreur":         "from-red-900 to-black",
+	"Musique":         "from-fuchsia-500 to-pink-600",
+	"Mystère":         "from-violet-800 to-slate-900",
+	"Romance":         "from-rose-400 to-pink-600",
+	"Science-Fiction": "from-cyan-500 to-blue-700",
+	"Téléfilm":        "from-gray-500 to-gray-700",
+	"Thriller":        "from-orange-700 to-red-900",
+	"Guerre":          "from-stone-600 to-stone-800",
+	"Western":         "from-orange-300 to-amber-500",
 }

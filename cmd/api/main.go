@@ -4,6 +4,7 @@ import (
 	"StreamflixBackend/internal/http/handlers"
 	"StreamflixBackend/internal/http/middleware"
 	"StreamflixBackend/internal/models"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -58,6 +59,29 @@ func main() {
 		c.JSON(200, movies)
 
 	})
+	router.GET("/getTopRatedMovies", func(c *gin.Context) {
+
+		movies, err := handlers.GetTopRatedMovies(token_tmdb, 1)
+		if err != nil {
+			return
+		}
+		c.JSON(200, movies)
+
+	})
+
+	router.GET("/getTrendingMovies", func(c *gin.Context) {
+		// query params optionnels: ?time_window=day|week&language=fr-FR&page=1
+		timeWindow := c.DefaultQuery("time_window", "day")
+		language := c.DefaultQuery("language", "fr-FR")
+
+		movies, err := handlers.GetTrendingMovies(token_tmdb, timeWindow, 1, language)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(200, movies)
+	})
 
 	router.GET("/categories", func(c *gin.Context) {
 		c.JSON(200, handlers.RandomCategories())
@@ -102,9 +126,50 @@ func main() {
 		c.JSON(200, similar)
 	})
 	router.GET("/moviesbygenre", func(c *gin.Context) {
-		genre := c.Query("genre")
+		genreIDStr := c.DefaultQuery("genre_id", "28")
+		genreID, _ := strconv.Atoi(genreIDStr)
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		language := c.DefaultQuery("language", "fr-FR")
 
-		c.JSON(200, gin.H{"movie": handlers.GetMoviesByGenre(genre)})
+		movies, err := handlers.GetMoviesByGenre(token_tmdb, genreID, page, language)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, movies)
+	})
+	router.GET("/getMovieGenreList", func(c *gin.Context) {
+		language := c.DefaultQuery("language", "fr-FR")
+
+		genreMap, err := handlers.GetMovieGenreCategories(token_tmdb, language)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, genreMap)
+	})
+	router.GET("/searchMovies", func(c *gin.Context) {
+		pageStr := c.DefaultQuery("page", "1")
+		ratingStr := c.DefaultQuery("rating", "0")
+		page, _ := strconv.Atoi(pageStr)
+		rating, _ := strconv.ParseFloat(ratingStr, 64)
+
+		movies, err := handlers.SearchMovies(models.SearchMoviesParams{
+			BearerToken: token_tmdb,
+			Query:       c.Query("query"),
+			GenresCSV:   c.Query("genres"),
+			YearsCSV:    c.Query("years"),
+			SortBy:      c.Query("sort_by"),
+			Page:        page,
+			Language:    c.DefaultQuery("language", "fr-FR"),
+			Rating:      rating,
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, movies)
 	})
 	router.GET("/user/list", func(c *gin.Context) {
 
@@ -292,5 +357,27 @@ func main() {
 		c.JSON(200, movieImdbId)
 	})
 
-	router.Run(":2000")
+	router.GET("/getTrendingTV", func(c *gin.Context) {
+		timeWindow := c.DefaultQuery("time_window", "day")
+		language := c.DefaultQuery("language", "fr-FR")
+
+		// optionnel: page
+		page := 1
+		if p := c.Query("page"); p != "" {
+			fmt.Sscanf(p, "%d", &page)
+		}
+
+		tv, err := handlers.GetTrendingTV(token_tmdb, timeWindow, page, language)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(200, tv)
+	})
+
+	err := router.Run(":2000")
+	if err != nil {
+		return
+	}
 }
