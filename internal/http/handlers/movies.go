@@ -1,12 +1,12 @@
 package handlers
 
 import (
+	"StreamflixBackend/internal/cache"
 	"StreamflixBackend/internal/models"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	_ "io"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,19 +15,74 @@ import (
 	"time"
 
 	"github.com/brianvoe/gofakeit/v7"
-	_ "github.com/gin-gonic/gin"
 )
+
+// ============================================================================
+// CACHE KEYS
+// ============================================================================
+
+type popularMoviesCacheKey struct {
+	page     string
+	language string
+}
+
+type topRatedMoviesCacheKey struct {
+	page int
+}
+
+type trendingMoviesCacheKey struct {
+	timeWindow string
+	page       int
+	language   string
+}
+
+type contentDetailsCacheKey struct {
+	movieID int
+}
+
+type similarMoviesCacheKey struct {
+	movieID int
+	page    string
+}
+
+type movieCreditsCacheKey struct {
+	movieID int
+}
+
+type movieImdbIDCacheKey struct {
+	movieID int
+}
+
+type genreCategoriesCacheKey struct {
+	language string
+}
+
+// ============================================================================
+// CACHES
+// ============================================================================
+
+var (
+	popularMoviesCache   = cache.New[popularMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	topRatedMoviesCache  = cache.New[topRatedMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	trendingMoviesCache  = cache.New[trendingMoviesCacheKey, []models.MovieDTO](15 * time.Minute)
+	contentDetailsCache  = cache.New[contentDetailsCacheKey, *models.ContentDetailsDTO](60 * time.Minute)
+	similarMoviesCache   = cache.New[similarMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	movieCreditsCache    = cache.New[movieCreditsCacheKey, *models.MovieCreditsDTO](60 * time.Minute)
+	movieImdbIDCache     = cache.New[movieImdbIDCacheKey, models.TmdbMovieImdbId](60 * time.Minute)
+	genreCategoriesCache = cache.New[genreCategoriesCacheKey, []models.CategoryDTO](24 * time.Hour)
+)
+
+// ============================================================================
+// FAKE DATA (inchangé)
+// ============================================================================
 
 var generateMovies = []models.Movie{}
 var generatedContentDetails = models.ContentDetails{}
 
 func RandomMovieList() []models.Movie {
-	// Si déjà généré, retourner la liste existante
 	if len(generateMovies) > 0 {
 		return generateMovies
 	}
-
-	// Sinon, générer
 	var movies []models.Movie
 	for i := 0; i < gofakeit.Number(10, 20); i++ {
 		movies = append(movies, models.Movie{
@@ -39,7 +94,6 @@ func RandomMovieList() []models.Movie {
 			ImageURL: "https://picsum.photos/400/600",
 		})
 	}
-
 	generateMovies = movies
 	return movies
 }
@@ -49,11 +103,8 @@ func GetContentDetailsRandomized() models.ContentDetails {
 		return generatedContentDetails
 	}
 	var details models.ContentDetails
-
-	// Générer le cast
 	castCount := gofakeit.Number(3, 6)
 	var cast []models.Cast
-
 	for j := 0; j < castCount; j++ {
 		cast = append(cast, models.Cast{
 			Name:  gofakeit.Name(),
@@ -61,7 +112,6 @@ func GetContentDetailsRandomized() models.ContentDetails {
 			Image: "https://i.pravatar.cc/150?img=" + strconv.Itoa(gofakeit.Number(1, 70)),
 		})
 	}
-
 	details = models.ContentDetails{
 		ID:             gofakeit.Number(100, 999),
 		Title:          gofakeit.MovieName(),
@@ -82,22 +132,27 @@ func GetContentDetailsRandomized() models.ContentDetails {
 	return details
 }
 
+// ============================================================================
+// HANDLERS
+// ============================================================================
+
 func GetPopularMovies(tmdbBearerToken string, imageBase string, genreMap map[int]string, page string) ([]models.MovieDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
 	}
-
 	if tmdbBearerToken == "" {
 		return nil, fmt.Errorf("TMDB bearer token missing")
 	}
-
 	if page == "" {
 		page = "1"
 	}
-
-	// Validation de la page
 	if _, err := strconv.Atoi(page); err != nil {
 		return nil, fmt.Errorf("invalid page")
+	}
+
+	key := popularMoviesCacheKey{page: page, language: "fr-FR"}
+	if cached, ok := popularMoviesCache.Get(key); ok {
+		return cached, nil
 	}
 
 	u, _ := url.Parse("https://api.themoviedb.org/3/movie/popular")
@@ -135,19 +190,16 @@ func GetPopularMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 				year = t.Year()
 			}
 		}
-
 		image := ""
 		if m.PosterPath != "" {
 			image = fmt.Sprintf("%s%s", imageBase, m.PosterPath)
 		}
-
 		genres := make([]string, 0, len(m.GenreIDs))
 		for _, gid := range m.GenreIDs {
 			if name, ok := genreMap[gid]; ok && name != "" {
 				genres = append(genres, name)
 			}
 		}
-
 		out = append(out, models.MovieDTO{
 			ID:     m.ID,
 			Title:  m.Title,
@@ -158,17 +210,21 @@ func GetPopularMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 		})
 	}
 
+	popularMoviesCache.Set(key, out)
 	return out, nil
 }
 
 func GetTopRatedMovies(bearerToken string, page int) ([]models.MovieDTO, error) {
-	url := fmt.Sprintf("https://api.themoviedb.org/3/movie/top_rated?language=fr-FR&page=%d", page)
+	key := topRatedMoviesCacheKey{page: page}
+	if cached, ok := topRatedMoviesCache.Get(key); ok {
+		return cached, nil
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/top_rated?language=fr-FR&page=%d", page)
+	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
-
 	req.Header.Add("accept", "application/json")
 	req.Header.Add("Authorization", "Bearer "+bearerToken)
 
@@ -193,14 +249,12 @@ func GetTopRatedMovies(bearerToken string, page int) ([]models.MovieDTO, error) 
 		if len(raw.ReleaseDate) >= 4 {
 			fmt.Sscanf(raw.ReleaseDate[:4], "%d", &year)
 		}
-
 		genres := make([]string, 0)
 		for _, id := range raw.GenreIDs {
 			if name, ok := models.MovieGenreMap[id]; ok {
 				genres = append(genres, name)
 			}
 		}
-
 		dtos = append(dtos, models.MovieDTO{
 			ID:     raw.ID,
 			Title:  raw.Title,
@@ -211,12 +265,13 @@ func GetTopRatedMovies(bearerToken string, page int) ([]models.MovieDTO, error) 
 		})
 	}
 
+	topRatedMoviesCache.Set(key, dtos)
 	return dtos, nil
 }
 
 func GetTrendingMovies(bearerToken, timeWindow string, page int, language string) ([]models.MovieDTO, error) {
 	if timeWindow == "" {
-		timeWindow = "day" // "day" ou "week"
+		timeWindow = "day"
 	}
 	if page <= 0 {
 		page = 1
@@ -225,12 +280,16 @@ func GetTrendingMovies(bearerToken, timeWindow string, page int, language string
 		language = "fr-FR"
 	}
 
-	url := fmt.Sprintf(
+	key := trendingMoviesCacheKey{timeWindow: timeWindow, page: page, language: language}
+	if cached, ok := trendingMoviesCache.Get(key); ok {
+		return cached, nil
+	}
+
+	u := fmt.Sprintf(
 		"https://api.themoviedb.org/3/trending/movie/%s?language=%s&page=%d",
 		timeWindow, language, page,
 	)
-
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
@@ -259,19 +318,16 @@ func GetTrendingMovies(bearerToken, timeWindow string, page int, language string
 		if len(raw.ReleaseDate) >= 4 {
 			fmt.Sscanf(raw.ReleaseDate[:4], "%d", &year)
 		}
-
 		genres := make([]string, 0, len(raw.GenreIDs))
 		for _, id := range raw.GenreIDs {
 			if name, ok := models.MovieGenreMap[id]; ok {
 				genres = append(genres, name)
 			}
 		}
-
 		image := ""
 		if raw.PosterPath != "" {
 			image = "https://image.tmdb.org/t/p/w500" + raw.PosterPath
 		}
-
 		dtos = append(dtos, models.MovieDTO{
 			ID:     raw.ID,
 			Title:  raw.Title,
@@ -282,6 +338,7 @@ func GetTrendingMovies(bearerToken, timeWindow string, page int, language string
 		})
 	}
 
+	trendingMoviesCache.Set(key, dtos)
 	return dtos, nil
 }
 
@@ -289,13 +346,16 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
 	}
-
 	if tmdbBearerToken == "" {
 		return nil, fmt.Errorf("TMDB bearer token missing")
 	}
 
-	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d", movieID)
+	key := contentDetailsCacheKey{movieID: movieID}
+	if cached, ok := contentDetailsCache.Get(key); ok {
+		return cached, nil
+	}
 
+	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d", movieID)
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -318,7 +378,6 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		return nil, fmt.Errorf("failed to decode tmdb response")
 	}
 
-	// Extraction de l'année
 	year := 0
 	if tmdbRes.ReleaseDate != "" {
 		if t, err := time.Parse("2006-01-02", tmdbRes.ReleaseDate); err == nil {
@@ -326,7 +385,6 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		}
 	}
 
-	// Construction des URLs d'images
 	image := ""
 	if tmdbRes.PosterPath != "" {
 		image = fmt.Sprintf("%s%s", imageBase, tmdbRes.PosterPath)
@@ -337,13 +395,11 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		backdropImage = fmt.Sprintf("https://image.tmdb.org/t/p/original%s", tmdbRes.BackdropPath)
 	}
 
-	// Extraction des genres
 	genres := make([]string, 0, len(tmdbRes.Genres))
 	for _, g := range tmdbRes.Genres {
 		genres = append(genres, g.Name)
 	}
 
-	// Durée formatée
 	duration := ""
 	if tmdbRes.Runtime > 0 {
 		hours := tmdbRes.Runtime / 60
@@ -355,7 +411,6 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		}
 	}
 
-	// Langues
 	languages := ""
 	if len(tmdbRes.SpokenLanguages) > 0 {
 		langNames := make([]string, 0, len(tmdbRes.SpokenLanguages))
@@ -365,13 +420,12 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		languages = strings.Join(langNames, ", ")
 	}
 
-	// Producteur (première compagnie de production)
 	producer := ""
 	if len(tmdbRes.ProductionCompanies) > 0 {
 		producer = tmdbRes.ProductionCompanies[0].Name
 	}
 
-	return &models.ContentDetailsDTO{
+	result := &models.ContentDetailsDTO{
 		ID:            tmdbRes.ID,
 		Title:         tmdbRes.Title,
 		Image:         image,
@@ -384,20 +438,26 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 		Synopsis:      tmdbRes.Overview,
 		Languages:     languages,
 		Producer:      producer,
-	}, nil
+	}
+
+	contentDetailsCache.Set(key, result)
+	return result, nil
 }
 
 func GetSimilarMovies(tmdbBearerToken string, imageBase string, genreMap map[int]string, movieID int, page string) ([]models.MovieDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
 	}
-
 	if tmdbBearerToken == "" {
 		return nil, fmt.Errorf("TMDB bearer token missing")
 	}
-
 	if page == "" {
 		page = "1"
+	}
+
+	key := similarMoviesCacheKey{movieID: movieID, page: page}
+	if cached, ok := similarMoviesCache.Get(key); ok {
+		return cached, nil
 	}
 
 	u, _ := url.Parse(fmt.Sprintf("https://api.themoviedb.org/3/movie/%d/similar", movieID))
@@ -435,19 +495,16 @@ func GetSimilarMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 				year = t.Year()
 			}
 		}
-
 		image := ""
 		if m.PosterPath != "" {
 			image = fmt.Sprintf("%s%s", imageBase, m.BackdropPath)
 		}
-
 		genres := make([]string, 0, len(m.GenreIDs))
 		for _, gid := range m.GenreIDs {
 			if name, ok := genreMap[gid]; ok && name != "" {
 				genres = append(genres, name)
 			}
 		}
-
 		out = append(out, models.MovieDTO{
 			ID:     m.ID,
 			Title:  m.Title,
@@ -458,6 +515,7 @@ func GetSimilarMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 		})
 	}
 
+	similarMoviesCache.Set(key, out)
 	return out, nil
 }
 
@@ -466,9 +524,13 @@ func GetMovieCredits(tmdbToken string, imageBase string, movieID int) (*models.M
 		imageBase = "https://image.tmdb.org/t/p/w500"
 	}
 
-	url := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d/credits", movieID)
+	key := movieCreditsCacheKey{movieID: movieID}
+	if cached, ok := movieCreditsCache.Get(key); ok {
+		return cached, nil
+	}
 
-	req, _ := http.NewRequest("GET", url, nil)
+	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d/credits", movieID)
+	req, _ := http.NewRequest("GET", u, nil)
 	req.Header.Set("Authorization", "Bearer "+tmdbToken)
 	req.Header.Set("Accept", "application/json")
 
@@ -488,26 +550,21 @@ func GetMovieCredits(tmdbToken string, imageBase string, movieID int) (*models.M
 	}
 
 	out := &models.MovieCreditsDTO{
-		Cast: make([]models.CastMemberDTO, 0),
+		Cast: make([]models.CastMemberMoviesDTO, 0),
 	}
 
-	// --- Director ---
 	for _, c := range tmdb.Crew {
 		if c.Job == "Director" {
 			out.Director = c.Name
 			break
 		}
 	}
-
-	// --- Producer ---
 	for _, c := range tmdb.Crew {
 		if c.Job == "Producer" || c.Job == "Executive Producer" {
 			out.Producer = c.Name
 			break
 		}
 	}
-
-	// --- Writer ---
 	for _, c := range tmdb.Crew {
 		if c.Job == "Screenplay" || c.Job == "Writer" || c.Job == "Novel" {
 			out.Writer = c.Name
@@ -515,299 +572,80 @@ func GetMovieCredits(tmdbToken string, imageBase string, movieID int) (*models.M
 		}
 	}
 
-	// --- ACTORS (limit 12) ---
 	for i, actor := range tmdb.Cast {
 		if i >= 12 {
 			break
 		}
-
 		image := ""
 		if actor.ProfilePath != "" {
 			image = imageBase + actor.ProfilePath
 		}
-
-		out.Cast = append(out.Cast, models.CastMemberDTO{
+		out.Cast = append(out.Cast, models.CastMemberMoviesDTO{
 			Name:  actor.Name,
 			Role:  actor.Character,
 			Image: image,
 		})
 	}
 
+	movieCreditsCache.Set(key, out)
 	return out, nil
 }
 
 func GetMovieImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId, error) {
-	log.Printf("   → GetMovieImdbID: Début pour movieID=%d", movieID)
+	log.Printf("   → GetMovieImdbID: movieID=%d", movieID)
 
 	if tmdbBearerToken == "" {
-		log.Println("   ❌ Token TMDB manquant")
 		return models.TmdbMovieImdbId{}, fmt.Errorf("TMDB bearer token missing")
 	}
 
-	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d", movieID)
-	log.Printf("   → URL TMDB: %s", u)
+	key := movieImdbIDCacheKey{movieID: movieID}
+	if cached, ok := movieImdbIDCache.Get(key); ok {
+		log.Printf("   ✅ Cache hit IMDB ID: %s", cached.ImdbId)
+		return cached, nil
+	}
 
+	u := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d", movieID)
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
-		log.Printf("   ❌ Erreur création requête: %v", err)
 		return models.TmdbMovieImdbId{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tmdbBearerToken)
 	req.Header.Set("Accept", "application/json")
 
-	log.Println("   → Envoi de la requête à TMDB...")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
 		return models.TmdbMovieImdbId{}, err
 	}
 	defer resp.Body.Close()
 
-	log.Printf("   → Status Code TMDB: %d", resp.StatusCode)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		log.Printf("   ❌ Réponse TMDB: %s", string(body))
-		return models.TmdbMovieImdbId{}, fmt.Errorf("tmdb error: status %d", resp.StatusCode)
+		return models.TmdbMovieImdbId{}, fmt.Errorf("tmdb error: status %d body=%s", resp.StatusCode, string(body))
 	}
 
 	var tmdbRes models.TmdbMovieImdbId
 	if err := json.NewDecoder(resp.Body).Decode(&tmdbRes); err != nil {
-		log.Printf("   ❌ Erreur décodage JSON: %v", err)
 		return models.TmdbMovieImdbId{}, fmt.Errorf("failed to decode tmdb response")
 	}
 
+	movieImdbIDCache.Set(key, tmdbRes)
 	log.Printf("   ✅ IMDB ID trouvé: %s", tmdbRes.ImdbId)
 	return tmdbRes, nil
 }
 
-func GetMovieStreamsFromImdb(imdbID, torrentioRealDebridKey, realDebridApiKey string) ([]StreamResult, error) {
-	if imdbID == "" {
-		return nil, fmt.Errorf("imdbID is required")
-	}
-	if realDebridApiKey == "" {
-		return nil, fmt.Errorf("RealDebrid API key is required")
-	}
-
-	// 1. Clients
-	torrentioClient := NewTorrentioClient(torrentioRealDebridKey)
-	realDebridClient := NewRealDebridClient(realDebridApiKey)
-
-	// 2. Service
-	streamingService := NewStreamingService(torrentioClient, realDebridClient)
-
-	// 3. Workflow complet
-	streams, err := streamingService.GetStreamForMovie(imdbID)
-	if err != nil {
-		return nil, err
-	}
-
-	return streams, nil
-}
-
-func GetTorrentioStreams(imdbID string) (*models.TorrentioResponse, error) {
-	log.Printf("   → GetTorrentioStreams: Début pour imdbID=%s", imdbID)
-
-	url := fmt.Sprintf("https://torrentio.strem.fun/stream/movie/%s.json", imdbID)
-	log.Printf("   → URL Torrentio: %s", url)
-
-	log.Println("   → Envoi de la requête à Torrentio...")
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// 🔥 Obligatoire sinon Torrentio bloque (403)
-	req.Header.Set("User-Agent", "curl/8.0")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	log.Printf("   → Status Code Torrentio: %d", resp.StatusCode)
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("   ❌ Réponse Torrentio : %s", string(body))
-		return nil, fmt.Errorf("Torrentio error: %d", resp.StatusCode)
-	}
-
-	var result models.TorrentioResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("   ❌ Erreur décodage JSON: %v", err)
-		return nil, err
-	}
-
-	log.Printf("   ✅ %d streams récupérés", len(result.Streams))
-	return &result, nil
-}
-func AddMagnetRealDebrid(apiKey, infoHash string) (*models.RdAddMagnetResponse, error) {
-	log.Printf("   → AddMagnetRealDebrid: InfoHash=%s", infoHash)
-
-	apiURL := "https://api.real-debrid.com/rest/1.0/torrents/addMagnet"
-	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", infoHash)
-	log.Printf("   → Magnet construit: %s", magnet)
-
-	data := url.Values{}
-	data.Set("magnet", magnet)
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
-	if err != nil {
-		log.Printf("   ❌ Erreur création requête: %v", err)
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	log.Println("   → Envoi de la requête à Real-Debrid...")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	log.Printf("   → Status Code Real-Debrid: %d", resp.StatusCode)
-
-	var result models.RdAddMagnetResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("   ❌ Erreur décodage JSON: %v", err)
-		return nil, err
-	}
-
-	log.Printf("   ✅ Torrent ID: %s", result.Id)
-	return &result, nil
-}
-func SelectFilesRealDebrid(apiKey, torrentId string) error {
-	log.Printf("   → SelectFilesRealDebrid: TorrentID=%s", torrentId)
-
-	apiURL := fmt.Sprintf("https://api.real-debrid.com/rest/1.0/torrents/selectFiles/%s", torrentId)
-	log.Printf("   → URL: %s", apiURL)
-
-	data := url.Values{}
-	data.Set("files", "all")
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
-	if err != nil {
-		log.Printf("   ❌ Erreur création requête: %v", err)
-		return err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	log.Println("   → Envoi de la requête...")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	log.Printf("   → Status Code: %d", resp.StatusCode)
-
-	if resp.StatusCode != 204 && resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("   ❌ Erreur Real-Debrid: %s", string(body))
-		return fmt.Errorf("select files error: %s", string(body))
-	}
-
-	log.Println("   ✅ Fichiers sélectionnés")
-	return nil
-}
-
-func GetRealDebridTorrentInfo(apiKey, torrentId string) (*models.RdTorrentInfo, error) {
-	log.Printf("   → GetRealDebridTorrentInfo: TorrentID=%s", torrentId)
-
-	apiURL := fmt.Sprintf("https://api.real-debrid.com/rest/1.0/torrents/info/%s", torrentId)
-	log.Printf("   → URL: %s", apiURL)
-
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		log.Printf("   ❌ Erreur création requête: %v", err)
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	log.Println("   → Envoi de la requête...")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	log.Printf("   → Status Code: %d", resp.StatusCode)
-
-	var info models.RdTorrentInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		log.Printf("   ❌ Erreur décodage JSON: %v", err)
-		return nil, err
-	}
-
-	log.Printf("   ✅ Infos récupérées: Status=%s, Progress=%.2f%%", info.Status, info.Progress)
-	return &info, nil
-}
-
-func UnrestrictRealDebridLink(apiKey, rawLink string) (*models.RdUnrestrictResponse, error) {
-	log.Printf("   → UnrestrictRealDebridLink: RawLink=%s", rawLink)
-
-	cleanLink := strings.ReplaceAll(rawLink, `\/`, `/`)
-	log.Printf("   → Lien nettoyé: %s", cleanLink)
-
-	apiURL := "https://api.real-debrid.com/rest/1.0/unrestrict/link"
-
-	data := url.Values{}
-	data.Set("link", cleanLink)
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
-	if err != nil {
-		log.Printf("   ❌ Erreur création requête: %v", err)
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	log.Println("   → Envoi de la requête...")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("   ❌ Erreur requête HTTP: %v", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	log.Printf("   → Status Code: %d", resp.StatusCode)
-
-	var info models.RdUnrestrictResponse
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		log.Printf("   ❌ Erreur décodage JSON: %v", err)
-		return nil, err
-	}
-
-	log.Printf("   ✅ Lien direct: %s", info.Download)
-	return &info, nil
-}
 func GetMoviesByGenre(bearerToken string, genreID int, page int, language string) ([]models.MovieDTO, error) {
-
 	const imageBaseURL = "https://image.tmdb.org/t/p/w500"
 
-	url := fmt.Sprintf(
+	key := models.MovieGenreCacheKey{GenreID: genreID, Page: page, Language: language}
+	if cached, ok := models.MoviesByGenreCache.Get(key); ok {
+		return cached, nil
+	}
+
+	u := fmt.Sprintf(
 		"https://api.themoviedb.org/3/discover/movie?with_genres=%d&sort_by=vote_average.desc&vote_count.gte=100&page=%d&language=%s",
 		genreID, page, language,
 	)
-
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -830,39 +668,232 @@ func GetMoviesByGenre(bearerToken string, genreID int, page int, language string
 	dtos := make([]models.MovieDTO, 0, len(result.Results))
 	for _, m := range result.Results {
 		year, _ := strconv.Atoi(safeYear(m.ReleaseDate))
-		genres := mapGenres(m.GenreIDs)
 		dtos = append(dtos, models.MovieDTO{
 			ID:     m.ID,
 			Title:  m.Title,
 			Image:  imageBaseURL + m.PosterPath,
 			Year:   year,
-			Genre:  genres,
+			Genre:  mapGenres(m.GenreIDs),
 			Rating: m.VoteAverage,
 		})
 	}
+
+	models.MoviesByGenreCache.Set(key, dtos)
 	return dtos, nil
 }
 
-func safeYear(date string) string {
-	if len(date) >= 4 {
-		return date[:4]
+func GetMovieGenreCategories(bearerToken, language string) ([]models.CategoryDTO, error) {
+	if strings.TrimSpace(language) == "" {
+		language = "fr-FR"
 	}
-	return "0"
+
+	key := genreCategoriesCacheKey{language: language}
+	if cached, ok := genreCategoriesCache.Get(key); ok {
+		return cached, nil
+	}
+
+	u, _ := url.Parse("https://api.themoviedb.org/3/genre/movie/list")
+	q := u.Query()
+	q.Set("language", language)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Accept", "application/json")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		b, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("tmdb error: status=%d body=%s", res.StatusCode, string(b))
+	}
+
+	var decoded models.TMDBGenreMovieListResponse
+	if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+		return nil, err
+	}
+
+	out := make([]models.CategoryDTO, 0, len(decoded.Genres))
+	for _, g := range decoded.Genres {
+		color := models.GenreCategoryColor[g.Name]
+		if color == "" {
+			color = "from-slate-600 to-slate-800"
+		}
+		out = append(out, models.CategoryDTO{
+			ID:           g.ID,
+			CategoryName: g.Name,
+			Description:  genreDescription(g.Name),
+			Href:         genreHref(g.ID),
+			Color:        color,
+		})
+	}
+
+	genreCategoriesCache.Set(key, out)
+	return out, nil
 }
 
-func mapGenres(ids []int) []string {
-	genres := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if name, ok := models.MovieGenreMap[id]; ok {
-			genres = append(genres, name)
-		}
+// ============================================================================
+// REAL-DEBRID & TORRENTIO (pas de cache — requêtes transactionnelles)
+// ============================================================================
+
+func GetTorrentioStreams(imdbID string) (*models.TorrentioResponse, error) {
+	log.Printf("   → GetTorrentioStreams: imdbID=%s", imdbID)
+
+	u := fmt.Sprintf("https://torrentio.strem.fun/stream/movie/%s.json", imdbID)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
 	}
-	return genres
+	req.Header.Set("User-Agent", "curl/8.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Torrentio error: %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var result models.TorrentioResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	log.Printf("   ✅ %d streams récupérés", len(result.Streams))
+	return &result, nil
 }
+
+func AddMagnetRealDebrid(apiKey, infoHash string) (*models.RdAddMagnetResponse, error) {
+	log.Printf("   → AddMagnetRealDebrid: InfoHash=%s", infoHash)
+
+	apiURL := "https://api.real-debrid.com/rest/1.0/torrents/addMagnet"
+	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", infoHash)
+
+	data := url.Values{}
+	data.Set("magnet", magnet)
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result models.RdAddMagnetResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	log.Printf("   ✅ Torrent ID: %s", result.Id)
+	return &result, nil
+}
+
+func SelectFilesRealDebrid(apiKey, torrentId string) error {
+	log.Printf("   → SelectFilesRealDebrid: TorrentID=%s", torrentId)
+
+	apiURL := fmt.Sprintf("https://api.real-debrid.com/rest/1.0/torrents/selectFiles/%s", torrentId)
+	data := url.Values{}
+	data.Set("files", "all")
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("select files error: %s", string(body))
+	}
+
+	log.Println("   ✅ Fichiers sélectionnés")
+	return nil
+}
+
+func GetRealDebridTorrentInfo(apiKey, torrentId string) (*models.RdTorrentInfo, error) {
+	log.Printf("   → GetRealDebridTorrentInfo: TorrentID=%s", torrentId)
+
+	apiURL := fmt.Sprintf("https://api.real-debrid.com/rest/1.0/torrents/info/%s", torrentId)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var info models.RdTorrentInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+
+	log.Printf("   ✅ Status=%s Progress=%.2f%%", info.Status, info.Progress)
+	return &info, nil
+}
+
+func UnrestrictRealDebridLink(apiKey, rawLink string) (*models.RdUnrestrictResponse, error) {
+	log.Printf("   → UnrestrictRealDebridLink: RawLink=%s", rawLink)
+
+	cleanLink := strings.ReplaceAll(rawLink, `\/`, `/`)
+	apiURL := "https://api.real-debrid.com/rest/1.0/unrestrict/link"
+
+	data := url.Values{}
+	data.Set("link", cleanLink)
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBufferString(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var info models.RdUnrestrictResponse
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+
+	log.Printf("   ✅ Lien direct: %s", info.Download)
+	return &info, nil
+}
+
+// ============================================================================
+// SEARCH (conserve son propre cache map existant)
+// ============================================================================
 
 func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
-
-	// ───── Defaults ─────
 	if p.Page <= 0 {
 		p.Page = 1
 	}
@@ -887,14 +918,10 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 	}
 
 	wantedGenres := parseGenresCSV(p.GenresCSV)
-
 	seen := make(map[int]bool)
 	out := make([]models.MovieDTO, 0)
 
-	// ───── Une requête par année, cache basé sur query+année uniquement ─────
 	for _, year := range years {
-
-		// ✅ Clé de cache = query + année SEULEMENT (pas les genres)
 		cacheKey := buildCacheKey(p, year)
 
 		models.CacheMutex.RLock()
@@ -904,10 +931,8 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 		var results []models.TMDBMovieRaw
 
 		if found && time.Now().Before(cached.ExpiresAt) {
-			// ✅ Cache hit → pas de requête TMDB
 			results = cached.Results
 		} else {
-			// ✅ Cache miss → requête TMDB sans genre (on filtre après)
 			var err error
 			results, err = fetchMoviesPage(models.FetchParams{
 				BearerToken: p.BearerToken,
@@ -917,12 +942,10 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 				Page:        p.Page,
 				Language:    p.Language,
 				HasQuery:    hasQuery,
-				// ✅ Genre volontairement absent → filtrage applicatif uniquement
 			})
 			if err != nil {
 				return nil, err
 			}
-
 			models.CacheMutex.Lock()
 			models.SearchCache[cacheKey] = models.CachedSearch{
 				Results:   results,
@@ -931,22 +954,14 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 			models.CacheMutex.Unlock()
 		}
 
-		// ───── Filtrage 100% applicatif ─────
 		for _, m := range results {
-
-			// ✅ Filtre genre en mémoire : le film doit avoir TOUS les genres voulus
 			if len(wantedGenres) > 0 && !hasAllGenres(m.GenreIDs, wantedGenres) {
 				continue
 			}
-
 			dto := toMovieDTO(m)
-
-			// ✅ Filtre rating en mémoire
 			if p.Rating > 0 && dto.Rating < p.Rating {
 				continue
 			}
-
-			// ✅ Déduplication
 			if !seen[m.ID] {
 				seen[m.ID] = true
 				out = append(out, dto)
@@ -957,7 +972,98 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 	return out, nil
 }
 
-// ─── Requête unitaire ────────────────────────────────────────────────────────
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+func safeYear(date string) string {
+	if len(date) >= 4 {
+		return date[:4]
+	}
+	return "0"
+}
+
+func mapGenres(ids []int) []string {
+	genres := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if name, ok := models.MovieGenreMap[id]; ok {
+			genres = append(genres, name)
+		}
+	}
+	return genres
+}
+
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return []string{}
+	}
+	return strings.Split(s, ",")
+}
+
+func parseIntsCSV(s string) []int {
+	result := []int{}
+	for _, part := range splitCSV(s) {
+		if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
+func parseGenresCSV(s string) map[int]bool {
+	result := map[int]bool{}
+	for _, part := range splitCSV(s) {
+		if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+			result[id] = true
+		}
+	}
+	return result
+}
+
+func toMovieDTO(m models.TMDBMovieRaw) models.MovieDTO {
+	year := 0
+	if len(m.ReleaseDate) >= 4 {
+		if y, err := strconv.Atoi(m.ReleaseDate[:4]); err == nil {
+			year = y
+		}
+	}
+	image := ""
+	if m.PosterPath != "" {
+		image = "https://image.tmdb.org/t/p/w500" + m.PosterPath
+	}
+	genres := make([]string, 0, len(m.GenreIDs))
+	for _, id := range m.GenreIDs {
+		if name, ok := models.MovieGenreMap[id]; ok {
+			genres = append(genres, name)
+		}
+	}
+	return models.MovieDTO{
+		ID:     m.ID,
+		Title:  m.Title,
+		Image:  image,
+		Year:   year,
+		Genre:  genres,
+		Rating: m.VoteAverage,
+	}
+}
+
+func buildCacheKey(p models.SearchMoviesParams, year int) string {
+	return fmt.Sprintf("q=%s|y=%d|page=%d|lang=%s",
+		strings.TrimSpace(p.Query), year, p.Page, p.Language)
+}
+
+func hasAllGenres(movieGenres []int, wanted map[int]bool) bool {
+	movieSet := make(map[int]bool, len(movieGenres))
+	for _, id := range movieGenres {
+		movieSet[id] = true
+	}
+	for id := range wanted {
+		if !movieSet[id] {
+			return false
+		}
+	}
+	return true
+}
 
 func fetchMoviesPage(p models.FetchParams) ([]models.TMDBMovieRaw, error) {
 	var endpoint *url.URL
@@ -1001,7 +1107,7 @@ func fetchMoviesPage(p models.FetchParams) ([]models.TMDBMovieRaw, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("tmdb error: status=%d (genre=%s year=%d)", resp.StatusCode, p.Genre, p.Year)
+		return nil, fmt.Errorf("tmdb error: status=%d", resp.StatusCode)
 	}
 
 	var decoded models.TMDBDiscoverResponse
@@ -1012,156 +1118,10 @@ func fetchMoviesPage(p models.FetchParams) ([]models.TMDBMovieRaw, error) {
 	return decoded.Results, nil
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-func splitCSV(s string) []string {
-	if strings.TrimSpace(s) == "" {
-		return []string{}
-	}
-	return strings.Split(s, ",")
-}
-
-func parseIntsCSV(s string) []int {
-	result := []int{}
-	for _, part := range splitCSV(s) {
-		if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
-			result = append(result, n)
-		}
-	}
-	return result
-}
-
-func parseGenresCSV(s string) map[int]bool {
-	result := map[int]bool{}
-	for _, part := range splitCSV(s) {
-		if id, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
-			result[id] = true
-		}
-	}
-	return result
-}
-
-func hasAnyGenre(movieGenres []int, wanted map[int]bool) bool {
-	for _, id := range movieGenres {
-		if wanted[id] {
-			return true
-		}
-	}
-	return false
-}
-
-func toMovieDTO(m models.TMDBMovieRaw) models.MovieDTO {
-	year := 0
-	if len(m.ReleaseDate) >= 4 {
-		if y, err := strconv.Atoi(m.ReleaseDate[:4]); err == nil {
-			year = y
-		}
-	}
-
-	image := ""
-	if m.PosterPath != "" {
-		image = "https://image.tmdb.org/t/p/w500" + m.PosterPath
-	}
-
-	genres := make([]string, 0, len(m.GenreIDs))
-	for _, id := range m.GenreIDs {
-		if name, ok := models.MovieGenreMap[id]; ok {
-			genres = append(genres, name)
-		}
-	}
-
-	return models.MovieDTO{
-		ID:     m.ID,
-		Title:  m.Title,
-		Image:  image,
-		Year:   year,
-		Genre:  genres,
-		Rating: m.VoteAverage,
-	}
-}
-func buildCacheKey(p models.SearchMoviesParams, year int) string {
-	return fmt.Sprintf(
-		"q=%s|y=%d|page=%d|lang=%s",
-		strings.TrimSpace(p.Query),
-		year,
-		p.Page,
-		p.Language,
-	)
-}
-
-// ✅ Le film doit contenir TOUS les genres voulus
-func hasAllGenres(movieGenres []int, wanted map[int]bool) bool {
-	movieSet := make(map[int]bool, len(movieGenres))
-	for _, id := range movieGenres {
-		movieSet[id] = true
-	}
-	for id := range wanted {
-		if !movieSet[id] {
-			return false
-		}
-	}
-	return true
-}
-func GetMovieGenreCategories(bearerToken, language string) ([]models.CategoryDTO, error) {
-	if strings.TrimSpace(language) == "" {
-		language = "fr-FR"
-	}
-
-	u, _ := url.Parse("https://api.themoviedb.org/3/genre/movie/list")
-	q := u.Query()
-	q.Set("language", language)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+bearerToken)
-	req.Header.Set("Accept", "application/json")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		b, _ := io.ReadAll(res.Body)
-		return nil, fmt.Errorf("tmdb error: status=%d body=%s", res.StatusCode, string(b))
-	}
-
-	var decoded models.TMDBGenreMovieListResponse
-	if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
-		return nil, err
-	}
-
-	out := make([]models.CategoryDTO, 0, len(decoded.Genres))
-	for _, g := range decoded.Genres {
-		color := models.GenreCategoryColor[g.Name]
-		if color == "" {
-			// fallback propre si TMDB renvoie un genre non prévu
-			color = "from-slate-600 to-slate-800"
-		}
-
-		out = append(out, models.CategoryDTO{
-			ID:           g.ID,
-			CategoryName: g.Name,
-			Description:  genreDescription(g.Name),
-			Href:         genreHref(g.ID),
-			Color:        color,
-			// Previews: nil (optionnel, tu peux le remplir plus tard)
-		})
-	}
-
-	return out, nil
-}
 func genreDescription(name string) string {
-	// Tu peux affiner, là c’est propre et simple
 	return "Découvrez les meilleurs films du genre " + name + "."
 }
 
 func genreHref(id int) string {
-	// URL interne de ton app (à adapter)
-	// Exemple: /genres/28 ou /search?genres=28
 	return "/genres/" + strconv.Itoa(id)
 }

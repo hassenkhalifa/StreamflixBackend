@@ -1,13 +1,9 @@
 package models
 
 import (
-	"sync"
+	"StreamflixBackend/internal/cache"
 	"time"
 )
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
 
 var Gradients = []string{
 	"from-purple-500 to-pink-500",
@@ -19,7 +15,6 @@ var Gradients = []string{
 	"from-gray-500 to-slate-500",
 }
 
-// MovieGenres - Constantes des genres de films
 var MovieGenres = struct {
 	ACTION          int
 	ADVENTURE       int
@@ -62,7 +57,6 @@ var MovieGenres = struct {
 	WESTERN:         37,
 }
 
-// TVGenres - Constantes des genres de séries TV
 var TVGenres = struct {
 	ACTION_ADVENTURE int
 	ANIMATION        int
@@ -99,7 +93,6 @@ var TVGenres = struct {
 	WESTERN:          37,
 }
 
-// MovieGenreMap - Map ID → Nom (français)
 var MovieGenreMap = map[int]string{
 	28:    "Action",
 	12:    "Aventure",
@@ -122,7 +115,6 @@ var MovieGenreMap = map[int]string{
 	37:    "Western",
 }
 
-// TVGenreMap - Map ID → Nom (français)
 var TVGenreMap = map[int]string{
 	10759: "Action & Aventure",
 	16:    "Animation",
@@ -141,11 +133,26 @@ var TVGenreMap = map[int]string{
 	10768: "Guerre & Politique",
 	37:    "Western",
 }
-var (
-	SearchCache = make(map[string]CachedSearch)
-	CacheMutex  sync.RWMutex
-	CacheTTL    = 5 * time.Minute
-)
+
+var TvGenreMap = map[int]string{
+	10759: "Action & Adventure",
+	16:    "Animation",
+	35:    "Comédie",
+	80:    "Crime",
+	99:    "Documentaire",
+	18:    "Drame",
+	10751: "Famille",
+	10762: "Kids",
+	9648:  "Mystery",
+	10763: "News",
+	10764: "Reality",
+	10765: "Sci-Fi & Fantasy",
+	10766: "Soap",
+	10767: "Talk",
+	10768: "War & Politics",
+	37:    "Western",
+}
+
 var GenreCategoryColor = map[string]string{
 	"Action":          "from-red-600 to-red-800",
 	"Aventure":        "from-orange-500 to-amber-600",
@@ -167,3 +174,15 @@ var GenreCategoryColor = map[string]string{
 	"Guerre":          "from-stone-600 to-stone-800",
 	"Western":         "from-orange-300 to-amber-500",
 }
+
+var (
+	PopularMoviesCache   = cache.New[popularMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	TopRatedMoviesCache  = cache.New[topRatedMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	TrendingMoviesCache  = cache.New[trendingMoviesCacheKey, []MovieDTO](15 * time.Minute)
+	ContentDetailsCache  = cache.New[ContentDetailsCacheKey, *ContentDetailsDTO](60 * time.Minute)
+	SimilarMoviesCache   = cache.New[similarMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	MovieCreditsCache    = cache.New[movieCreditsCacheKey, *MovieCreditsDTO](60 * time.Minute)
+	MovieImdbIDCache     = cache.New[movieImdbIDCacheKey, TmdbMovieImdbId](60 * time.Minute)
+	GenreCategoriesCache = cache.New[genreCategoriesCacheKey, []CategoryDTO](24 * time.Hour)
+	MoviesByGenreCache   = cache.New[MovieGenreCacheKey, []MovieDTO](30 * time.Minute)
+)

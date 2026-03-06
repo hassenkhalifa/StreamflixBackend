@@ -286,6 +286,115 @@ func main() {
 		log.Println("========== FIN /videoPlayer/:id (SUCCESS) ==========")
 		c.JSON(200, videoPlayer)
 	})
+	router.GET("/videoPlayer/:id/:season/:episode", func(c *gin.Context) {
+		log.Println("========== DÉBUT /videoPlayer/:id/:season/:episode ==========")
+
+		// Étape 1: Récupération de l'ID depuis l'URL
+		idParam := c.Param("id")
+		season := c.Param("season")
+		episode := c.Param("episode")
+		log.Printf("📥 [1/8] ID reçu depuis l'URL: %s, saison: %s, épisode: %s", idParam, season, episode)
+
+		imdbid, err := strconv.Atoi(idParam)
+		if err != nil {
+			log.Printf("❌ Erreur conversion ID en int: %v", err)
+			c.JSON(400, gin.H{"error": "ID invalide"})
+			return
+		}
+		log.Printf("✅ ID converti en int: %d", imdbid)
+
+		// Étape 2: Récupération de l'IMDB ID depuis TMDB
+		log.Printf("🔍 [2/8] Appel TMDB pour récupérer l'IMDB ID du film %d...", imdbid)
+		movieImdbId, err := handlers.GetMovieImdbID(token_tmdb, imdbid)
+		if err != nil {
+			log.Printf("❌ Erreur GetMovieImdbID: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible de récupérer l'IMDB ID"})
+			return
+		}
+		log.Printf("✅ IMDB ID récupéré: %s", movieImdbId.ImdbId)
+		idParamFinal := fmt.Sprintf("%s:%s:%s", movieImdbId.ImdbId, c.Param("season"), c.Param("episode"))
+
+		// Étape 3: Récupération des streams Torrentio
+		log.Printf("🌐 [3/8] Appel Torrentio pour IMDB ID: %s...", idParamFinal)
+		streams, err := handlers.GetTorrentioStreams(idParamFinal)
+		if err != nil {
+			log.Printf("❌ Erreur GetTorrentioStreams: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible de récupérer les streams"})
+			return
+		}
+		log.Printf("✅ Nombre de streams trouvés: %d", len(streams.Streams))
+		if len(streams.Streams) > 0 {
+			log.Printf("   Premier stream: %s (InfoHash: %s)", streams.Streams[0].Name, streams.Streams[0].InfoHash)
+		} else {
+			log.Println("❌ Aucun stream disponible")
+			c.JSON(404, gin.H{"error": "Aucun stream trouvé"})
+			return
+		}
+
+		// Étape 4: Ajout du magnet à Real-Debrid
+		log.Printf("🧲 [4/8] Ajout du magnet à Real-Debrid (InfoHash: %s)...", streams.Streams[0].InfoHash)
+		debrid, err := handlers.AddMagnetRealDebrid(token_rdt, streams.Streams[0].InfoHash)
+		if err != nil {
+			log.Printf("❌ Erreur AddMagnetRealDebrid: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible d'ajouter le magnet"})
+			return
+		}
+		log.Printf("✅ Magnet ajouté avec succès. Torrent ID: %s", debrid.Id)
+
+		// Étape 5: Sélection des fichiers
+		log.Printf("📂 [5/8] Sélection des fichiers pour le torrent %s...", debrid.Id)
+		err = handlers.SelectFilesRealDebrid(token_rdt, debrid.Id)
+		if err != nil {
+			log.Printf("❌ Erreur SelectFilesRealDebrid: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible de sélectionner les fichiers"})
+			return
+		}
+		log.Println("✅ Fichiers sélectionnés avec succès")
+
+		// Étape 6: Récupération des infos du torrent
+		log.Printf("ℹ️  [6/8] Récupération des infos du torrent %s...", debrid.Id)
+		info, err := handlers.GetRealDebridTorrentInfo(token_rdt, debrid.Id)
+		if err != nil {
+			log.Printf("❌ Erreur GetRealDebridTorrentInfo: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible de récupérer les infos du torrent"})
+			return
+		}
+		log.Printf("✅ Infos torrent récupérées:")
+		log.Printf("   - Filename: %s", info.Filename)
+		log.Printf("   - Status: %s", info.Status)
+		log.Printf("   - Progress: %.2f%%", info.Progress)
+		log.Printf("   - Nombre de liens: %d", len(info.Links))
+		if len(info.Links) > 0 {
+			log.Printf("   - Premier lien: %s", info.Links[0])
+		} else {
+			log.Println("❌ Aucun lien disponible")
+			c.JSON(500, gin.H{"error": "Aucun lien disponible"})
+			return
+		}
+
+		// Étape 7: Unrestrict et récupération du MPD
+		log.Printf("🔓 [7/8] Unrestrict du lien: %s...", info.Links[0])
+		fileid, err := handlers.UnrestrictAndGetMPD(token_rdt, info.Links[0])
+		if err != nil {
+			log.Printf("❌ Erreur UnrestrictAndGetMPD: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible d'unrestrict le lien"})
+			return
+		}
+		log.Printf("✅ Lien unrestricted. File ID: %s", fileid)
+
+		// Étape 8: Récupération du lecteur vidéo
+		log.Printf("🎬 [8/8] Récupération du lecteur vidéo pour File ID: %s...", fileid)
+		videoPlayer, err := handlers.GetVideoPlayer(token_rdt, fileid)
+		if err != nil {
+			log.Printf("❌ Erreur GetVideoPlayer: %v", err)
+			c.JSON(500, gin.H{"error": "Impossible de récupérer le lecteur vidéo"})
+			return
+		}
+		log.Println("✅ Lecteur vidéo récupéré avec succès")
+
+		log.Println("========== FIN /videoPlayer/:id (SUCCESS) ==========")
+		c.JSON(200, videoPlayer)
+	})
 	router.GET("/zt/search", func(c *gin.Context) {
 		category := c.Query("category")
 		query := c.Query("query")
@@ -374,6 +483,89 @@ func main() {
 		}
 
 		c.JSON(200, tv)
+	})
+
+	router.GET("/getTVShowsByGenre", func(c *gin.Context) {
+		genreIDStr := c.DefaultQuery("genre_id", "18")
+		pageStr := c.DefaultQuery("page", "1")
+		language := c.DefaultQuery("language", "fr-FR")
+
+		genreID, err := strconv.Atoi(genreIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "genre_id invalide"})
+			return
+		}
+
+		page, err := strconv.Atoi(pageStr)
+		if err != nil || page < 1 {
+			page = 1
+		}
+
+		tvs, err := handlers.GetTVByGenre(token_tmdb, genreID, page, language)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, tvs)
+	})
+
+	router.GET("/getPopularTVShows", func(c *gin.Context) {
+		language := c.DefaultQuery("language", "fr-FR")
+		pageStr := c.DefaultQuery("page", "1")
+
+		page, err := strconv.Atoi(pageStr)
+		if err != nil || page < 1 {
+			page = 1
+		}
+
+		shows, err := handlers.GetPopularTVShows(token_tmdb, page, language)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, shows)
+	})
+	router.GET("/getTVInfo", func(c *gin.Context) {
+		idStr := c.Query("series_id")
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "series_id requis"})
+			return
+		}
+		seriesID, err := strconv.Atoi(idStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "series_id invalide"})
+			return
+		}
+
+		language := c.DefaultQuery("language", "fr-FR")
+
+		info, err := handlers.GetTVInfo(token_tmdb, seriesID, language)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, info)
+	})
+	router.GET("/searchTV", func(c *gin.Context) {
+		query := c.Query("query")
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "query requis"})
+			return
+		}
+
+		language := c.DefaultQuery("language", "fr-FR")
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+
+		results, err := handlers.SearchTV(token_tmdb, query, language, page)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, results)
 	})
 
 	err := router.Run(":2000")
