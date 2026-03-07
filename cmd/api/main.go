@@ -4,6 +4,7 @@ import (
 	"StreamflixBackend/internal/http/handlers"
 	"StreamflixBackend/internal/http/middleware"
 	"StreamflixBackend/internal/models"
+	"StreamflixBackend/internal/utils"
 	"fmt"
 	"log"
 	"net/http"
@@ -54,7 +55,7 @@ func main() {
 
 		movies, err := handlers.GetPopularMovies(token_tmdb, "", models.MovieGenreMap, "")
 		if err != nil {
-			return
+			utils.InternalError(c, err)
 		}
 		c.JSON(200, movies)
 
@@ -63,7 +64,7 @@ func main() {
 
 		movies, err := handlers.GetTopRatedMovies(token_tmdb, 1)
 		if err != nil {
-			return
+			utils.InternalError(c, err)
 		}
 		c.JSON(200, movies)
 
@@ -76,7 +77,7 @@ func main() {
 
 		movies, err := handlers.GetTrendingMovies(token_tmdb, timeWindow, 1, language)
 		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -92,7 +93,7 @@ func main() {
 
 		details, err := handlers.GetContentDetails(token_tmdb, "", movieID)
 		if err != nil {
-			return
+			utils.InternalError(c, err)
 		}
 		c.JSON(200, details)
 	})
@@ -101,13 +102,13 @@ func main() {
 		idStr := c.Param("id")
 		movieID, err := strconv.Atoi(idStr)
 		if err != nil || movieID <= 0 {
-			c.JSON(400, gin.H{"error": "invalid id"})
+			utils.InternalError(c, err)
 			return
 		}
 
 		out, err := handlers.GetMovieCredits(token_tmdb, "", movieID)
 		if err != nil {
-			c.JSON(502, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -117,7 +118,7 @@ func main() {
 		idStr := c.Param("id")
 		movieID, err := strconv.Atoi(idStr)
 		if err != nil || movieID <= 0 {
-			c.JSON(400, gin.H{"error": "invalid id"})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -133,7 +134,7 @@ func main() {
 
 		movies, err := handlers.GetMoviesByGenre(token_tmdb, genreID, page, language)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, movies)
@@ -143,7 +144,7 @@ func main() {
 
 		genreMap, err := handlers.GetMovieGenreCategories(token_tmdb, language)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -166,7 +167,7 @@ func main() {
 			Rating:      rating,
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, movies)
@@ -190,7 +191,7 @@ func main() {
 		imdbid, err := strconv.Atoi(idParam)
 		if err != nil {
 			log.Printf("❌ Erreur conversion ID en int: %v", err)
-			c.JSON(400, gin.H{"error": "ID invalide"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ ID converti en int: %d", imdbid)
@@ -200,7 +201,7 @@ func main() {
 		movieImdbId, err := handlers.GetMovieImdbID(token_tmdb, imdbid)
 		if err != nil {
 			log.Printf("❌ Erreur GetMovieImdbID: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer l'IMDB ID"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ IMDB ID récupéré: %s", movieImdbId.ImdbId)
@@ -210,7 +211,7 @@ func main() {
 		streams, err := handlers.GetTorrentioStreams(movieImdbId.ImdbId)
 		if err != nil {
 			log.Printf("❌ Erreur GetTorrentioStreams: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer les streams"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Nombre de streams trouvés: %d", len(streams.Streams))
@@ -218,7 +219,7 @@ func main() {
 			log.Printf("   Premier stream: %s (InfoHash: %s)", streams.Streams[0].Name, streams.Streams[0].InfoHash)
 		} else {
 			log.Println("❌ Aucun stream disponible")
-			c.JSON(404, gin.H{"error": "Aucun stream trouvé"})
+			utils.APIError(c, http.StatusNotFound, "Aucun stream trouvé")
 			return
 		}
 
@@ -227,7 +228,7 @@ func main() {
 		debrid, err := handlers.AddMagnetRealDebrid(token_rdt, streams.Streams[0].InfoHash)
 		if err != nil {
 			log.Printf("❌ Erreur AddMagnetRealDebrid: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible d'ajouter le magnet"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Magnet ajouté avec succès. Torrent ID: %s", debrid.Id)
@@ -237,7 +238,7 @@ func main() {
 		err = handlers.SelectFilesRealDebrid(token_rdt, debrid.Id)
 		if err != nil {
 			log.Printf("❌ Erreur SelectFilesRealDebrid: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de sélectionner les fichiers"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Println("✅ Fichiers sélectionnés avec succès")
@@ -247,7 +248,7 @@ func main() {
 		info, err := handlers.GetRealDebridTorrentInfo(token_rdt, debrid.Id)
 		if err != nil {
 			log.Printf("❌ Erreur GetRealDebridTorrentInfo: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer les infos du torrent"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Infos torrent récupérées:")
@@ -259,7 +260,7 @@ func main() {
 			log.Printf("   - Premier lien: %s", info.Links[0])
 		} else {
 			log.Println("❌ Aucun lien disponible")
-			c.JSON(500, gin.H{"error": "Aucun lien disponible"})
+			utils.APIError(c, http.StatusNotFound, "Aucun lien disponible")
 			return
 		}
 
@@ -268,7 +269,7 @@ func main() {
 		fileid, err := handlers.UnrestrictAndGetMPD(token_rdt, info.Links[0])
 		if err != nil {
 			log.Printf("❌ Erreur UnrestrictAndGetMPD: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible d'unrestrict le lien"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Lien unrestricted. File ID: %s", fileid)
@@ -278,7 +279,7 @@ func main() {
 		videoPlayer, err := handlers.GetVideoPlayer(token_rdt, fileid)
 		if err != nil {
 			log.Printf("❌ Erreur GetVideoPlayer: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer le lecteur vidéo"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Println("✅ Lecteur vidéo récupéré avec succès")
@@ -298,7 +299,7 @@ func main() {
 		imdbid, err := strconv.Atoi(idParam)
 		if err != nil {
 			log.Printf("❌ Erreur conversion ID en int: %v", err)
-			c.JSON(400, gin.H{"error": "ID invalide"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ ID converti en int: %d", imdbid)
@@ -308,7 +309,7 @@ func main() {
 		movieImdbId, err := handlers.GetMovieImdbID(token_tmdb, imdbid)
 		if err != nil {
 			log.Printf("❌ Erreur GetMovieImdbID: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer l'IMDB ID"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ IMDB ID récupéré: %s", movieImdbId.ImdbId)
@@ -319,7 +320,7 @@ func main() {
 		streams, err := handlers.GetTorrentioStreams(idParamFinal)
 		if err != nil {
 			log.Printf("❌ Erreur GetTorrentioStreams: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer les streams"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Nombre de streams trouvés: %d", len(streams.Streams))
@@ -327,7 +328,7 @@ func main() {
 			log.Printf("   Premier stream: %s (InfoHash: %s)", streams.Streams[0].Name, streams.Streams[0].InfoHash)
 		} else {
 			log.Println("❌ Aucun stream disponible")
-			c.JSON(404, gin.H{"error": "Aucun stream trouvé"})
+			utils.APIError(c, http.StatusNotFound, "Aucun stream trouvé")
 			return
 		}
 
@@ -336,7 +337,7 @@ func main() {
 		debrid, err := handlers.AddMagnetRealDebrid(token_rdt, streams.Streams[0].InfoHash)
 		if err != nil {
 			log.Printf("❌ Erreur AddMagnetRealDebrid: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible d'ajouter le magnet"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Magnet ajouté avec succès. Torrent ID: %s", debrid.Id)
@@ -346,7 +347,7 @@ func main() {
 		err = handlers.SelectFilesRealDebrid(token_rdt, debrid.Id)
 		if err != nil {
 			log.Printf("❌ Erreur SelectFilesRealDebrid: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de sélectionner les fichiers"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Println("✅ Fichiers sélectionnés avec succès")
@@ -356,7 +357,7 @@ func main() {
 		info, err := handlers.GetRealDebridTorrentInfo(token_rdt, debrid.Id)
 		if err != nil {
 			log.Printf("❌ Erreur GetRealDebridTorrentInfo: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer les infos du torrent"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Infos torrent récupérées:")
@@ -368,7 +369,7 @@ func main() {
 			log.Printf("   - Premier lien: %s", info.Links[0])
 		} else {
 			log.Println("❌ Aucun lien disponible")
-			c.JSON(500, gin.H{"error": "Aucun lien disponible"})
+			utils.APIError(c, http.StatusNotFound, "Aucun lien disponible")
 			return
 		}
 
@@ -377,7 +378,7 @@ func main() {
 		fileid, err := handlers.UnrestrictAndGetMPD(token_rdt, info.Links[0])
 		if err != nil {
 			log.Printf("❌ Erreur UnrestrictAndGetMPD: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible d'unrestrict le lien"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Printf("✅ Lien unrestricted. File ID: %s", fileid)
@@ -387,7 +388,7 @@ func main() {
 		videoPlayer, err := handlers.GetVideoPlayer(token_rdt, fileid)
 		if err != nil {
 			log.Printf("❌ Erreur GetVideoPlayer: %v", err)
-			c.JSON(500, gin.H{"error": "Impossible de récupérer le lecteur vidéo"})
+			utils.InternalError(c, err)
 			return
 		}
 		log.Println("✅ Lecteur vidéo récupéré avec succès")
@@ -401,13 +402,13 @@ func main() {
 		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 
 		if category == "" || query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"status": false, "error": "category and query are required"})
+			utils.APIError(c, http.StatusBadRequest, "category and query are required")
 			return
 		}
 
 		results, err := parser.Search(category, query, page)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": false, "error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -419,13 +420,13 @@ func main() {
 		query := c.Query("query")
 
 		if category == "" || query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"status": false, "error": "category and query are required"})
+			utils.APIError(c, http.StatusBadRequest, "category and query are required")
 			return
 		}
 
 		results, err := parser.SearchAll(category, query)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": false, "error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -438,7 +439,7 @@ func main() {
 
 		basicInfo, err := parser.GetMovieNameFromId(category, id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": false, "error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -451,7 +452,7 @@ func main() {
 
 		movieData, err := parser.GetQueryDatas(category, id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": false, "error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -478,7 +479,7 @@ func main() {
 
 		tv, err := handlers.GetTrendingTV(token_tmdb, timeWindow, page, language)
 		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -492,7 +493,7 @@ func main() {
 
 		genreID, err := strconv.Atoi(genreIDStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "genre_id invalide"})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -503,7 +504,7 @@ func main() {
 
 		tvs, err := handlers.GetTVByGenre(token_tmdb, genreID, page, language)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -521,7 +522,7 @@ func main() {
 
 		shows, err := handlers.GetPopularTVShows(token_tmdb, page, language)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -530,12 +531,12 @@ func main() {
 	router.GET("/getTVInfo", func(c *gin.Context) {
 		idStr := c.Query("series_id")
 		if idStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "series_id requis"})
+			utils.APIError(c, http.StatusBadRequest, "series_id requis")
 			return
 		}
 		seriesID, err := strconv.Atoi(idStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "series_id invalide"})
+			utils.APIError(c, http.StatusBadRequest, "series_id invalide")
 			return
 		}
 
@@ -543,7 +544,7 @@ func main() {
 
 		info, err := handlers.GetTVInfo(token_tmdb, seriesID, language)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
@@ -552,7 +553,7 @@ func main() {
 	router.GET("/searchTV", func(c *gin.Context) {
 		query := c.Query("query")
 		if query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "query requis"})
+			utils.APIError(c, http.StatusBadRequest, "query requis")
 			return
 		}
 
@@ -561,7 +562,7 @@ func main() {
 
 		results, err := handlers.SearchTV(token_tmdb, query, language, page)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			utils.InternalError(c, err)
 			return
 		}
 
