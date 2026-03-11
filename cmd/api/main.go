@@ -208,7 +208,7 @@ func main() {
 
 		// Étape 3: Récupération des streams Torrentio
 		log.Printf("🌐 [3/8] Appel Torrentio pour IMDB ID: %s...", movieImdbId.ImdbId)
-		streams, err := handlers.GetTorrentioStreams(movieImdbId.ImdbId)
+		streams, err := handlers.GetTorrentioMoviesStreams(movieImdbId.ImdbId)
 		if err != nil {
 			log.Printf("❌ Erreur GetTorrentioStreams: %v", err)
 			utils.InternalError(c, err)
@@ -306,7 +306,7 @@ func main() {
 
 		// Étape 2: Récupération de l'IMDB ID depuis TMDB
 		log.Printf("🔍 [2/8] Appel TMDB pour récupérer l'IMDB ID du film %d...", imdbid)
-		movieImdbId, err := handlers.GetMovieImdbID(token_tmdb, imdbid)
+		movieImdbId, err := handlers.GetSeriesImdbID(token_tmdb, imdbid)
 		if err != nil {
 			log.Printf("❌ Erreur GetMovieImdbID: %v", err)
 			utils.InternalError(c, err)
@@ -317,7 +317,7 @@ func main() {
 
 		// Étape 3: Récupération des streams Torrentio
 		log.Printf("🌐 [3/8] Appel Torrentio pour IMDB ID: %s...", idParamFinal)
-		streams, err := handlers.GetTorrentioStreams(idParamFinal)
+		streams, err := handlers.GetTorrentioSeriesStreams(idParamFinal)
 		if err != nil {
 			log.Printf("❌ Erreur GetTorrentioStreams: %v", err)
 			utils.InternalError(c, err)

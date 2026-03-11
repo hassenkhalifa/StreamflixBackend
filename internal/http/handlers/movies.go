@@ -633,6 +633,48 @@ func GetMovieImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId
 	return tmdbRes, nil
 }
 
+func GetSeriesImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId, error) {
+	log.Printf("   → GetMovieImdbID: movieID=%d", movieID)
+
+	if tmdbBearerToken == "" {
+		return models.TmdbMovieImdbId{}, fmt.Errorf("TMDB bearer token missing")
+	}
+
+	key := movieImdbIDCacheKey{movieID: movieID}
+	if cached, ok := movieImdbIDCache.Get(key); ok {
+		log.Printf("   ✅ Cache hit IMDB ID: %s", cached.ImdbId)
+		return cached, nil
+	}
+
+	u := fmt.Sprintf("https://api.themoviedb.org/3/tv/%d/external_ids", movieID)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return models.TmdbMovieImdbId{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tmdbBearerToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return models.TmdbMovieImdbId{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return models.TmdbMovieImdbId{}, fmt.Errorf("tmdb error: status %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var tmdbRes models.TmdbMovieImdbId
+	if err := json.NewDecoder(resp.Body).Decode(&tmdbRes); err != nil {
+		return models.TmdbMovieImdbId{}, fmt.Errorf("failed to decode tmdb response")
+	}
+
+	movieImdbIDCache.Set(key, tmdbRes)
+	log.Printf("   ✅ IMDB ID trouvé: %s", tmdbRes.ImdbId)
+	return tmdbRes, nil
+}
+
 func GetMoviesByGenre(bearerToken string, genreID int, page int, language string) ([]models.MovieDTO, error) {
 	const imageBaseURL = "https://image.tmdb.org/t/p/w500"
 
@@ -743,10 +785,39 @@ func GetMovieGenreCategories(bearerToken, language string) ([]models.CategoryDTO
 // REAL-DEBRID & TORRENTIO (pas de cache — requêtes transactionnelles)
 // ============================================================================
 
-func GetTorrentioStreams(imdbID string) (*models.TorrentioResponse, error) {
+func GetTorrentioMoviesStreams(imdbID string) (*models.TorrentioResponse, error) {
 	log.Printf("   → GetTorrentioStreams: imdbID=%s", imdbID)
 
 	u := fmt.Sprintf("https://torrentio.strem.fun/stream/movie/%s.json", imdbID)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "curl/8.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Torrentio error: %d body=%s", resp.StatusCode, string(body))
+	}
+
+	var result models.TorrentioResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	log.Printf("   ✅ %d streams récupérés", len(result.Streams))
+	return &result, nil
+}
+func GetTorrentioSeriesStreams(imdbID string) (*models.TorrentioResponse, error) {
+	log.Printf("   → GetTorrentioStreams: imdbID=%s", imdbID)
+
+	u := fmt.Sprintf("https://torrentio.strem.fun/stream/series/%s.json", imdbID)
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
