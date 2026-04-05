@@ -66,7 +66,7 @@ func (c *Client) UnrestrictLink(link string, password string, remote *int) (*Unr
 
 	if resp.StatusCode != http.StatusOK {
 		var rdErr ErrorResponse
-		if json.Unmarshal(body, &rdErr) == nil && rdErr.Error != "" {
+		if json.Unmarshal(body, &rdErr) == nil && rdErr.Message != "" {
 			return nil, rdErr
 		}
 		return nil, fmt.Errorf("realdebrid: http %d: %s", resp.StatusCode, string(body))

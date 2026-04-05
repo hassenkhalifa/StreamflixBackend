@@ -1,5 +1,7 @@
 package realdebrid
 
+import "fmt"
+
 type UnrestrictResponse struct {
 	ID         string `json:"id"`
 	Filename   string `json:"filename"`
@@ -12,13 +14,13 @@ type UnrestrictResponse struct {
 }
 
 type ErrorResponse struct {
-	Error     string `json:"error"`
+	Message   string `json:"error"`
 	ErrorCode *int   `json:"error_code"`
 }
 
 func (e ErrorResponse) Error() string {
 	if e.ErrorCode != nil {
-		return e.Error + " (code=" + string(rune(*e.ErrorCode)) + ")"
+		return fmt.Sprintf("%s (code=%d)", e.Message, *e.ErrorCode)
 	}
-	return e.Error
+	return e.Message
 }
