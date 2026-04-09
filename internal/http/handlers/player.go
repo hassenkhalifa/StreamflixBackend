@@ -6,7 +6,26 @@ import (
 	"strings"
 )
 
-// GetVideoPlayer construit un VideoPlayer complet avec toutes les infos réelles
+// GetVideoPlayer construit un objet [models.VideoPlayer] complet à partir des informations
+// réelles du média hébergé sur Real-Debrid.
+//
+// Cette fonction orchestre plusieurs étapes :
+//  1. Récupération des métadonnées du média via [GetMediaInfos] (appel API Real-Debrid).
+//  2. Détermination des pistes par défaut : première piste audio trouvée, pas de sous-titres,
+//     et qualité "UHD" si disponible, sinon "Original".
+//  3. Construction de l'URL de streaming par défaut via [BuildStreamURL].
+//  4. Génération de la liste des qualités disponibles avec leurs URLs pré-calculées
+//     via [buildQualitiesListWithURLs].
+//  5. Construction des listes de pistes audio et de sous-titres disponibles
+//     via [buildAudioList] et [buildSubtitlesList].
+//  6. Sélection de l'image poster (backdrop en priorité, sinon poster vertical).
+//
+// Paramètres :
+//   - token : jeton d'authentification Real-Debrid (OAuth Bearer token).
+//   - fileID : identifiant du fichier sur Real-Debrid, obtenu après unrestrict.
+//
+// Retourne un [models.VideoPlayer] entièrement configuré pour le frontend, ou une erreur
+// si la récupération des infos média ou la construction de l'URL échoue.
 func GetVideoPlayer(token, fileID string) (models.VideoPlayer, error) {
 	// 1. Récupérer les infos média depuis Real-Debrid
 	mediaInfo, err := GetMediaInfos(token, fileID)
@@ -65,7 +84,24 @@ func GetVideoPlayer(token, fileID string) (models.VideoPlayer, error) {
 	return videoPlayer, nil
 }
 
-// buildQualitiesListWithURLs génère la liste des qualités avec l'URL pré-calculée pour chacune
+// buildQualitiesListWithURLs génère la liste ordonnée des qualités vidéo disponibles,
+// chacune associée à son URL de streaming pré-calculée.
+//
+// Les qualités sont triées par ordre décroissant de résolution, de "Original" (qualité native)
+// jusqu'à "360P". Seules les qualités présentes dans mediaInfo.AvailableQualities sont incluses.
+// Pour chaque qualité, l'URL est construite via [BuildStreamURL] avec les paramètres audio,
+// sous-titres et codec fournis. Si la construction de l'URL échoue pour une qualité donnée,
+// celle-ci est silencieusement ignorée.
+//
+// Le label affiché est formaté via [formatQualityLabel] (ex. "FHD (1080p) - Standard Bitrate").
+//
+// Paramètres :
+//   - mediaInfo : métadonnées du média issues de l'API Real-Debrid.
+//   - audio : identifiant de la piste audio sélectionnée (ex. "eng1").
+//   - subs : identifiant de la piste de sous-titres sélectionnée (ex. "none").
+//   - codec : codec audio souhaité en minuscules (ex. "aac").
+//
+// Retourne un slice de [models.Quality] trié par résolution décroissante.
 func buildQualitiesListWithURLs(mediaInfo *models.MediaInfoResponse, audio, subs, codec string) []models.Quality {
 	result := []models.Quality{}
 
@@ -102,7 +138,20 @@ func buildQualitiesListWithURLs(mediaInfo *models.MediaInfoResponse, audio, subs
 	return result
 }
 
-// formatQualityLabel formate les labels qualité + résolution + bitrate
+// formatQualityLabel convertit une clé de qualité interne en label lisible pour l'utilisateur.
+//
+// La correspondance est définie dans un dictionnaire statique, par exemple :
+//   - "Original" ou "UHD" -> "UHD (2160p)"
+//   - "1080P High" -> "FHD (1080p) - High Bitrate"
+//   - "720P" -> "HD (720p) - Standard Bitrate"
+//
+// Si la clé n'est pas trouvée dans le dictionnaire, un fallback générique est utilisé
+// en remplaçant simplement "P" par "p" dans la clé (ex. "540P" -> "540p").
+//
+// Paramètre :
+//   - key : clé de qualité telle que retournée par l'API Real-Debrid (ex. "1080P", "720P High").
+//
+// Retourne le label formaté correspondant.
 func formatQualityLabel(key string) string {
 
 	labelMap := map[string]string{

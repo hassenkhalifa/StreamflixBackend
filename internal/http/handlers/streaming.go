@@ -7,11 +7,23 @@ import (
 	"time"
 )
 
+// StreamingService orchestre le workflow complet de streaming :
+// découverte de torrents via Torrentio, débridage via Real-Debrid,
+// et récupération des URLs de lecture (téléchargement direct, DASH, HLS).
+// Il relie le TorrentioClient (recherche de sources) au RealDebridClient
+// (conversion magnet → lien de streaming haute vitesse).
 type StreamingService struct {
 	TorrentioClient  *TorrentioClient
 	RealDebridClient *RealDebridClient
 }
 
+// StreamResult représente un flux de streaming résolu pour un contenu donné.
+// Il contient les métadonnées du torrent (titre, qualité, taille), l'état
+// de cache Real-Debrid, ainsi que les différentes URLs de lecture disponibles :
+//   - StreamURL : lien de téléchargement direct (non restreint)
+//   - DashURL   : lien de transcodage MPEG-DASH
+//   - HlsURL    : lien de transcodage HLS (Apple)
+//   - Magnet    : lien magnet original avec les trackers
 type StreamResult struct {
 	Title       string `json:"title"`
 	Quality     string `json:"quality"`
@@ -24,6 +36,9 @@ type StreamResult struct {
 	Magnet      string `json:"magnet"`
 }
 
+// NewStreamingService crée une nouvelle instance de StreamingService
+// en injectant les clients Torrentio et Real-Debrid nécessaires
+// au workflow de résolution de streams.
 func NewStreamingService(torrentioClient *TorrentioClient, rdClient *RealDebridClient) *StreamingService {
 	return &StreamingService{
 		TorrentioClient:  torrentioClient,
@@ -31,7 +46,15 @@ func NewStreamingService(torrentioClient *TorrentioClient, rdClient *RealDebridC
 	}
 }
 
-// Workflow complet : Magnet → Real-Debrid → Stream
+// GetStreamForMovie exécute le workflow complet magnet → Real-Debrid → stream
+// pour un film identifié par son identifiant IMDb.
+//
+// Étapes du workflow :
+//  1. Récupération des streams disponibles depuis Torrentio
+//  2. Vérification du cache Real-Debrid pour chaque torrent
+//  3. Pour les torrents en cache, résolution immédiate des URLs de lecture
+//
+// Retourne une liste de StreamResult triée avec les métadonnées et les URLs.
 func (s *StreamingService) GetStreamForMovie(imdbID string) ([]StreamResult, error) {
 	// 1. Récupérer les streams depuis Torrentio
 	streams, err := s.TorrentioClient.GetMovieStreams(imdbID)
@@ -69,7 +92,18 @@ func (s *StreamingService) GetStreamForMovie(imdbID string) ([]StreamResult, err
 	return results, nil
 }
 
-// Obtenir les URLs de streaming pour un torrent cached
+// getStreamURLs résout les URLs de streaming (téléchargement, DASH, HLS) pour un
+// torrent identifié par son infoHash. Cette méthode exécute le pipeline complet
+// Real-Debrid en 7 étapes :
+//  1. Ajout du magnet à Real-Debrid
+//  2. Récupération des informations du torrent (liste des fichiers)
+//  3. Sélection du meilleur fichier vidéo (le plus volumineux)
+//  4. Demande de sélection des fichiers auprès de l'API
+//  5. Attente du téléchargement (instantané si le torrent est en cache)
+//  6. Dé-restriction du lien pour obtenir l'URL de téléchargement direct
+//  7. Récupération des variantes de transcodage (DASH et HLS)
+//
+// Retourne dans l'ordre : URL de téléchargement, URL DASH, URL HLS, ou une erreur.
 func (s *StreamingService) getStreamURLs(infoHash string) (string, string, string, error) {
 	// Construire le magnet
 	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", infoHash)
@@ -130,7 +164,10 @@ func (s *StreamingService) getStreamURLs(infoHash string) (string, string, strin
 	return unrestrictResp.Download, dashURL, hlsURL, nil
 }
 
-// Sélectionner le meilleur fichier vidéo (le plus gros)
+// selectBestVideoFile parcourt la liste des fichiers d'un torrent et retourne
+// l'identifiant du fichier vidéo le plus volumineux. La détection se fait par
+// extension de fichier parmi les formats courants : .mkv, .mp4, .avi, .mov,
+// .wmv, .flv, .webm. Retourne -1 si aucun fichier vidéo n'est trouvé.
 func (s *StreamingService) selectBestVideoFile(files []TorrentFile) int {
 	var bestFile TorrentFile
 	bestFileID := -1
@@ -156,7 +193,9 @@ func (s *StreamingService) selectBestVideoFile(files []TorrentFile) int {
 	return bestFileID
 }
 
-// Helpers
+// extractQuality extrait la résolution vidéo à partir du nom d'un stream Torrentio.
+// Recherche les résolutions courantes dans l'ordre décroissant : 2160p, 1080p,
+// 720p, 480p. Retourne "Unknown" si aucune résolution n'est détectée.
 func extractQuality(name string) string {
 	qualities := []string{"2160p", "1080p", "720p", "480p"}
 	for _, q := range qualities {
@@ -167,6 +206,10 @@ func extractQuality(name string) string {
 	return "Unknown"
 }
 
+// extractSize extrait la taille du fichier depuis le nom d'un stream Torrentio.
+// Le format attendu utilise l'emoji disquette (ex: "... 💾 2.1 GB 👤 ...").
+// La taille est extraite entre le séparateur 💾 et le séparateur 👤.
+// Retourne une chaîne vide si le format n'est pas reconnu.
 func extractSize(name string) string {
 	// Extraire "💾 2.1 GB" du nom
 	parts := strings.Split(name, "💾")
@@ -176,6 +219,9 @@ func extractSize(name string) string {
 	return ""
 }
 
+// buildMagnetLink construit un lien magnet complet à partir d'un infoHash et
+// d'une liste de sources Torrentio. Les sources préfixées par "tracker:" sont
+// ajoutées en tant que paramètres tracker (&tr=) dans l'URI magnet.
 func buildMagnetLink(infoHash string, sources []string) string {
 	magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s", infoHash)
 
@@ -189,6 +235,11 @@ func buildMagnetLink(infoHash string, sources []string) string {
 	return magnet
 }
 
+// extractFileIDFromURL extrait l'identifiant de fichier Real-Debrid depuis une URL
+// de téléchargement. Le format attendu est :
+// https://download.real-debrid.com/d/{ID}/filename.ext
+// L'identifiant est nécessaire pour appeler l'API de transcodage streaming.
+// Retourne une chaîne vide si le format de l'URL n'est pas reconnu.
 func extractFileIDFromURL(downloadURL string) string {
 	// Extraire l'ID depuis une URL comme:
 	// https://download.real-debrid.com/d/ABCD1234/filename.mkv

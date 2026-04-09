@@ -1,3 +1,9 @@
+// Package config fournit les tests unitaires pour le chargement de la configuration.
+//
+// Les tests vérifient le bon fonctionnement du chargement des valeurs par défaut,
+// la lecture des variables d'environnement, la détection de l'environnement de production,
+// le parsing des niveaux de log et le parsing des origines CORS.
+// Plusieurs tests utilisent le pattern de tests pilotés par table (table-driven tests).
 package config
 
 import (
@@ -9,6 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestLoad_Defaults vérifie que la fonction Load retourne les valeurs par défaut
+// correctes lorsqu'aucune variable d'environnement n'est définie.
+// Les variables d'environnement sont explicitement supprimées avant le test.
 func TestLoad_Defaults(t *testing.T) {
 	// Clear env vars to test defaults
 	envVars := []string{"PORT", "GIN_MODE", "ENVIRONMENT", "REALDEBRID_TOKEN", "TMDB_TOKEN",
@@ -33,6 +42,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, cfg.CacheTTL)
 }
 
+// TestLoad_FromEnv vérifie que la fonction Load lit correctement toutes les
+// variables d'environnement et les convertit dans les types appropriés.
+// Les variables sont nettoyées après le test via un defer.
 func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("PORT", "8080")
 	os.Setenv("GIN_MODE", "release")
@@ -69,6 +81,9 @@ func TestLoad_FromEnv(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, cfg.CacheTTL)
 }
 
+// TestIsProduction vérifie la méthode IsProduction avec différents environnements.
+// Utilise un pattern de tests pilotés par table pour couvrir les cas :
+// production (true), development (false) et chaîne vide (false).
 func TestIsProduction(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -88,6 +103,10 @@ func TestIsProduction(t *testing.T) {
 	}
 }
 
+// TestParseLogLevel vérifie la conversion des chaînes de niveau de log en
+// constantes slog.Level. Utilise un pattern de tests pilotés par table pour
+// couvrir tous les niveaux valides (debug, info, warn, warning, error)
+// ainsi que les valeurs invalides qui doivent retourner le niveau par défaut (info).
 func TestParseLogLevel(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -109,6 +128,9 @@ func TestParseLogLevel(t *testing.T) {
 	}
 }
 
+// TestParseCORSOrigins vérifie le parsing des origines CORS à partir d'une chaîne
+// séparée par des virgules. Utilise un pattern de tests pilotés par table pour
+// couvrir les cas : origine unique, origines multiples, espaces superflus et chaîne vide.
 func TestParseCORSOrigins(t *testing.T) {
 	tests := []struct {
 		name     string

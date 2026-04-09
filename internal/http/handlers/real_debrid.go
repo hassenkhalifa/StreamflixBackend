@@ -10,19 +10,34 @@ import (
 	"time"
 )
 
+// RealDebridClient est le client HTTP pour l'API Real-Debrid (v1.0).
+// Real-Debrid est un service de débridage qui convertit des liens magnet/torrent
+// en liens de téléchargement direct à haute vitesse. Ce client gère l'ensemble
+// du cycle de vie d'un torrent : ajout du magnet, sélection des fichiers,
+// attente du téléchargement, dé-restriction des liens et transcodage en streaming.
+// L'authentification se fait via un jeton Bearer (APIKey).
 type RealDebridClient struct {
 	APIKey  string
 	BaseURL string
 	Client  *http.Client
 }
 
-// Structures de réponse
-
+// AddMagnetResponse représente la réponse de l'API lors de l'ajout d'un lien magnet.
+// L'ID retourné est utilisé pour toutes les opérations ultérieures sur ce torrent
+// (consultation des infos, sélection des fichiers, suivi du téléchargement).
 type AddMagnetResponse struct {
 	ID  string `json:"id"`
 	URI string `json:"uri"`
 }
 
+// TorrentInfo contient les informations détaillées d'un torrent sur Real-Debrid.
+// Le champ Status reflète l'état du torrent dans le pipeline de traitement :
+//   - "magnet_error"             : erreur lors de la résolution du magnet
+//   - "waiting_files_selection"  : en attente de la sélection des fichiers
+//   - "downloading"              : téléchargement en cours (voir Progress)
+//   - "downloaded"               : téléchargement terminé, liens disponibles
+//
+// Le champ Links contient les URLs des fichiers sélectionnés une fois téléchargés.
 type TorrentInfo struct {
 	ID       string        `json:"id"`
 	Filename string        `json:"filename"`
@@ -34,6 +49,10 @@ type TorrentInfo struct {
 	Files    []TorrentFile `json:"files"`
 }
 
+// TorrentFile représente un fichier individuel à l'intérieur d'un torrent.
+// Le champ Selected indique si le fichier a été sélectionné pour le téléchargement
+// (0 = non sélectionné, 1 = sélectionné). Le champ Path contient le chemin
+// relatif du fichier dans l'arborescence du torrent.
 type TorrentFile struct {
 	ID       int    `json:"id"`
 	Path     string `json:"path"`
@@ -41,6 +60,11 @@ type TorrentFile struct {
 	Selected int    `json:"selected"` // 0 ou 1
 }
 
+// UnrestrictResponse représente la réponse de l'API de dé-restriction de lien.
+// Elle contient le lien de téléchargement direct (Download), les informations
+// sur le fichier (nom, taille, hébergeur), et éventuellement des alternatives
+// de streaming (HLS, DASH) avec différentes qualités disponibles.
+// Le champ Streamable vaut 1 si le fichier peut être lu en streaming.
 type UnrestrictResponse struct {
 	ID          string            `json:"id"`
 	Filename    string            `json:"filename"`
@@ -53,6 +77,9 @@ type UnrestrictResponse struct {
 	Alternative []Alternative     `json:"alternative,omitempty"`
 }
 
+// Alternative représente une variante de streaming disponible pour un fichier
+// dé-restreint. Chaque alternative propose un format de streaming (HLS ou DASH)
+// avec ses qualités disponibles et un lien de téléchargement spécifique.
 type Alternative struct {
 	Type     string            `json:"type"` // "hls", "dash"
 	Quality  map[string]string `json:"quality"`
@@ -60,6 +87,14 @@ type Alternative struct {
 	Download string            `json:"download"`
 }
 
+// StreamingTranscode contient les URLs de transcodage fournies par Real-Debrid
+// pour la lecture en streaming. Quatre formats sont disponibles :
+//   - Apple : transcodage HLS compatible avec les appareils Apple
+//   - Dash  : transcodage MPEG-DASH pour les lecteurs web adaptatifs
+//   - Livemp4 : transcodage MP4 progressif pour la lecture directe
+//   - H264WebM : transcodage H.264 au format WebM
+//
+// Chaque format expose un champ Full contenant l'URL de la qualité maximale.
 type StreamingTranscode struct {
 	Apple struct {
 		Full string `json:"full"`
@@ -75,6 +110,9 @@ type StreamingTranscode struct {
 	} `json:"h264_webm"`
 }
 
+// NewRealDebridClient crée un nouveau client Real-Debrid configuré avec la clé API
+// fournie. Le client utilise l'URL de base de l'API REST v1.0 et un timeout HTTP
+// de 30 secondes par défaut.
 func NewRealDebridClient(apiKey string) *RealDebridClient {
 	return &RealDebridClient{
 		APIKey:  apiKey,
@@ -85,7 +123,10 @@ func NewRealDebridClient(apiKey string) *RealDebridClient {
 	}
 }
 
-// Helper pour faire des requêtes
+// doRequest est la méthode utilitaire interne pour exécuter des requêtes HTTP
+// vers l'API Real-Debrid. Elle construit l'URL complète à partir de l'endpoint,
+// ajoute l'en-tête d'authentification Bearer, et configure le Content-Type
+// en "application/x-www-form-urlencoded" pour les méthodes POST et PUT.
 func (r *RealDebridClient) doRequest(method, endpoint string, body io.Reader) (*http.Response, error) {
 	url := r.BaseURL + endpoint
 
@@ -103,7 +144,10 @@ func (r *RealDebridClient) doRequest(method, endpoint string, body io.Reader) (*
 	return r.Client.Do(req)
 }
 
-// 1. Ajouter un magnet
+// AddMagnet soumet un lien magnet à Real-Debrid pour initier le processus de
+// téléchargement. C'est la première étape du workflow torrent.
+// L'API retourne un identifiant unique (ID) et une URI qui permettent de suivre
+// et gérer le torrent ajouté. Attend un code HTTP 201 (Created) en réponse.
 func (r *RealDebridClient) AddMagnet(magnetLink string) (*AddMagnetResponse, error) {
 	data := url.Values{}
 	data.Set("magnet", magnetLink)
@@ -127,7 +171,11 @@ func (r *RealDebridClient) AddMagnet(magnetLink string) (*AddMagnetResponse, err
 	return &result, nil
 }
 
-// 2. Récupérer les infos du torrent
+// GetTorrentInfo récupère les informations complètes d'un torrent identifié par
+// son ID Real-Debrid. Les informations incluent le statut du téléchargement,
+// la progression, la liste des fichiers contenus et les liens de téléchargement
+// disponibles. Cette méthode est utilisée à la fois pour inspecter les fichiers
+// avant sélection et pour vérifier l'état d'avancement du téléchargement.
 func (r *RealDebridClient) GetTorrentInfo(torrentID string) (*TorrentInfo, error) {
 	resp, err := r.doRequest("GET", "/torrents/info/"+torrentID, nil)
 	if err != nil {
@@ -148,7 +196,11 @@ func (r *RealDebridClient) GetTorrentInfo(torrentID string) (*TorrentInfo, error
 	return &info, nil
 }
 
-// 3. Sélectionner les fichiers (tous ou spécifiques)
+// SelectFiles indique à Real-Debrid quels fichiers du torrent doivent être
+// téléchargés. Si fileIDs est vide, tous les fichiers sont sélectionnés ("all").
+// Sinon, seuls les fichiers dont les identifiants sont fournis seront téléchargés.
+// Les identifiants sont transmis sous forme de chaîne séparée par des virgules
+// (ex: "1,3,5"). Cette étape est obligatoire avant que le téléchargement ne démarre.
 func (r *RealDebridClient) SelectFiles(torrentID string, fileIDs []int) error {
 	data := url.Values{}
 
@@ -177,7 +229,12 @@ func (r *RealDebridClient) SelectFiles(torrentID string, fileIDs []int) error {
 	return nil
 }
 
-// 4. Attendre que le torrent soit téléchargé
+// WaitForDownload attend que le torrent passe au statut "downloaded" en interrogeant
+// périodiquement l'API (toutes les 2 secondes). Pour les torrents déjà en cache
+// Real-Debrid, le retour est quasi-instantané. Le paramètre maxWait définit le
+// délai maximum d'attente avant de retourner une erreur de timeout.
+// Retourne une erreur immédiate si le torrent est en erreur (magnet_error, error,
+// virus, dead) ou si les fichiers n'ont pas encore été sélectionnés.
 func (r *RealDebridClient) WaitForDownload(torrentID string, maxWait time.Duration) (*TorrentInfo, error) {
 	timeout := time.After(maxWait)
 	ticker := time.NewTicker(2 * time.Second)
@@ -208,7 +265,11 @@ func (r *RealDebridClient) WaitForDownload(torrentID string, maxWait time.Durati
 	}
 }
 
-// 5. Unrestrict un lien pour obtenir le stream
+// UnrestrictLink dé-restreint un lien hébergeur pour obtenir un lien de
+// téléchargement direct à haute vitesse. Cette opération transforme un lien
+// Real-Debrid interne en un lien directement accessible, avec les informations
+// sur le fichier (nom, taille, possibilité de streaming) et éventuellement
+// des alternatives de streaming en différentes qualités.
 func (r *RealDebridClient) UnrestrictLink(link string) (*UnrestrictResponse, error) {
 	data := url.Values{}
 	data.Set("link", link)
@@ -232,7 +293,11 @@ func (r *RealDebridClient) UnrestrictLink(link string) (*UnrestrictResponse, err
 	return &result, nil
 }
 
-// 6. Récupérer les liens de streaming (HLS, DASH, etc.)
+// GetStreamingTranscode récupère les URLs de transcodage en streaming pour un
+// fichier identifié par son ID Real-Debrid. L'API fournit plusieurs formats :
+// Apple (HLS), DASH (MPEG-DASH), Livemp4 (MP4 progressif) et H264WebM.
+// Ces URLs permettent la lecture adaptative directement dans un lecteur web
+// sans nécessiter de téléchargement préalable du fichier complet.
 func (r *RealDebridClient) GetStreamingTranscode(fileID string) (*StreamingTranscode, error) {
 	resp, err := r.doRequest("GET", "/streaming/transcode/"+fileID, nil)
 	if err != nil {
@@ -253,7 +318,11 @@ func (r *RealDebridClient) GetStreamingTranscode(fileID string) (*StreamingTrans
 	return &result, nil
 }
 
-// Vérifier la disponibilité instantanée (cache)
+// CheckInstantAvailability vérifie si un torrent identifié par son hash est déjà
+// disponible dans le cache de Real-Debrid. Un torrent en cache peut être converti
+// en lien de téléchargement direct instantanément, sans attendre le téléchargement
+// complet. La vérification se fait en recherchant la présence du hash (en minuscules)
+// dans la réponse JSON de l'API. Retourne true si le torrent est en cache.
 func (r *RealDebridClient) CheckInstantAvailability(hash string) (bool, error) {
 	resp, err := r.doRequest("GET", "/torrents/instantAvailability/"+hash, nil)
 	if err != nil {

@@ -1,3 +1,19 @@
+// Package models contient tous les modèles de données (DTOs) de l'application StreamFlix.
+//
+// Ce package définit les structures utilisées pour :
+//   - Représenter les réponses des API externes (TMDB, Real-Debrid, Torrentio, TVMaze)
+//   - Transférer les données entre les couches (handlers ↔ services)
+//   - Sérialiser les réponses JSON de l'API StreamFlix
+//   - Stocker les données en cache
+//
+// Les modèles sont organisés par domaine fonctionnel :
+//   - content_models.go : films, séries TV, catégories, recherche
+//   - rd_models.go : Real-Debrid (débridage, streaming, transcodage)
+//   - zt_models.go : Zone Téléchargement (scraping, recherche)
+//   - player_models.go : lecteur vidéo (qualités, pistes audio/sous-titres)
+//   - user_models.go : données utilisateur (listes, favoris, historique)
+//   - ffmpegs_models.go : FFmpeg/FFprobe (résolution, pistes audio)
+//   - constants_models.go : constantes (genres, gradients, caches globaux)
 package models
 
 import (
@@ -5,6 +21,9 @@ import (
 	"time"
 )
 
+// Gradients contient une liste de classes CSS Tailwind représentant des dégradés de couleurs.
+// Ces dégradés sont utilisés pour attribuer un style visuel aux éléments du frontend,
+// par exemple pour colorer les cartes de catégories ou les bannières de contenu.
 var Gradients = []string{
 	"from-purple-500 to-pink-500",
 	"from-blue-500 to-cyan-500",
@@ -15,26 +34,30 @@ var Gradients = []string{
 	"from-gray-500 to-slate-500",
 }
 
+// MovieGenres regroupe les identifiants numériques des genres cinématographiques
+// tels que définis par l'API TMDB. Chaque champ correspond à un genre de film
+// et contient l'identifiant TMDB associé (par exemple ACTION = 28).
+// Cette structure anonyme sert de référence pour filtrer ou catégoriser les films.
 var MovieGenres = struct {
-	ACTION          int
-	ADVENTURE       int
-	ANIMATION       int
-	COMEDY          int
-	CRIME           int
-	DOCUMENTARY     int
-	DRAMA           int
-	FAMILY          int
-	FANTASY         int
-	HISTORY         int
-	HORROR          int
-	MUSIC           int
-	MYSTERY         int
-	ROMANCE         int
-	SCIENCE_FICTION int
-	TV_MOVIE        int
-	THRILLER        int
-	WAR             int
-	WESTERN         int
+	ACTION          int // Genre Action (TMDB ID : 28)
+	ADVENTURE       int // Genre Aventure (TMDB ID : 12)
+	ANIMATION       int // Genre Animation (TMDB ID : 16)
+	COMEDY          int // Genre Comédie (TMDB ID : 35)
+	CRIME           int // Genre Crime (TMDB ID : 80)
+	DOCUMENTARY     int // Genre Documentaire (TMDB ID : 99)
+	DRAMA           int // Genre Drame (TMDB ID : 18)
+	FAMILY          int // Genre Familial (TMDB ID : 10751)
+	FANTASY         int // Genre Fantastique (TMDB ID : 14)
+	HISTORY         int // Genre Histoire (TMDB ID : 36)
+	HORROR          int // Genre Horreur (TMDB ID : 27)
+	MUSIC           int // Genre Musique (TMDB ID : 10402)
+	MYSTERY         int // Genre Mystère (TMDB ID : 9648)
+	ROMANCE         int // Genre Romance (TMDB ID : 10749)
+	SCIENCE_FICTION int // Genre Science-Fiction (TMDB ID : 878)
+	TV_MOVIE        int // Genre Téléfilm (TMDB ID : 10770)
+	THRILLER        int // Genre Thriller (TMDB ID : 53)
+	WAR             int // Genre Guerre (TMDB ID : 10752)
+	WESTERN         int // Genre Western (TMDB ID : 37)
 }{
 	ACTION:          28,
 	ADVENTURE:       12,
@@ -57,23 +80,27 @@ var MovieGenres = struct {
 	WESTERN:         37,
 }
 
+// TVGenres regroupe les identifiants numériques des genres de séries TV
+// tels que définis par l'API TMDB. Chaque champ correspond à un genre télévisuel
+// et contient l'identifiant TMDB associé (par exemple DRAMA = 18).
+// Cette structure anonyme sert de référence pour filtrer ou catégoriser les séries.
 var TVGenres = struct {
-	ACTION_ADVENTURE int
-	ANIMATION        int
-	COMEDY           int
-	CRIME            int
-	DOCUMENTARY      int
-	DRAMA            int
-	FAMILY           int
-	KIDS             int
-	MYSTERY          int
-	NEWS             int
-	REALITY          int
-	SCI_FI_FANTASY   int
-	SOAP             int
-	TALK             int
-	WAR_POLITICS     int
-	WESTERN          int
+	ACTION_ADVENTURE int // Genre Action & Aventure (TMDB ID : 10759)
+	ANIMATION        int // Genre Animation (TMDB ID : 16)
+	COMEDY           int // Genre Comédie (TMDB ID : 35)
+	CRIME            int // Genre Crime (TMDB ID : 80)
+	DOCUMENTARY      int // Genre Documentaire (TMDB ID : 99)
+	DRAMA            int // Genre Drame (TMDB ID : 18)
+	FAMILY           int // Genre Familial (TMDB ID : 10751)
+	KIDS             int // Genre Enfants (TMDB ID : 10762)
+	MYSTERY          int // Genre Mystère (TMDB ID : 9648)
+	NEWS             int // Genre Actualités (TMDB ID : 10763)
+	REALITY          int // Genre Téléréalité (TMDB ID : 10764)
+	SCI_FI_FANTASY   int // Genre Science-Fiction & Fantastique (TMDB ID : 10765)
+	SOAP             int // Genre Feuilleton (TMDB ID : 10766)
+	TALK             int // Genre Talk-show (TMDB ID : 10767)
+	WAR_POLITICS     int // Genre Guerre & Politique (TMDB ID : 10768)
+	WESTERN          int // Genre Western (TMDB ID : 37)
 }{
 	ACTION_ADVENTURE: 10759,
 	ANIMATION:        16,
@@ -93,6 +120,9 @@ var TVGenres = struct {
 	WESTERN:          37,
 }
 
+// MovieGenreMap associe chaque identifiant numérique de genre TMDB à son libellé
+// en français pour les films. Cette map est utilisée pour convertir les IDs de genre
+// reçus de l'API TMDB en noms lisibles affichés dans l'interface utilisateur.
 var MovieGenreMap = map[int]string{
 	28:    "Action",
 	12:    "Aventure",
@@ -115,6 +145,9 @@ var MovieGenreMap = map[int]string{
 	37:    "Western",
 }
 
+// TVGenreMap associe chaque identifiant numérique de genre TMDB à son libellé
+// en français pour les séries TV. Cette map est utilisée pour convertir les IDs
+// de genre reçus de l'API TMDB en noms lisibles dans l'interface utilisateur.
 var TVGenreMap = map[int]string{
 	10759: "Action & Aventure",
 	16:    "Animation",
@@ -134,6 +167,10 @@ var TVGenreMap = map[int]string{
 	37:    "Western",
 }
 
+// TvGenreMap est une variante de TVGenreMap qui utilise les noms de genres
+// en anglais (ou mixte anglais/français) pour les séries TV.
+// Cette map est utilisée dans les contextes nécessitant les libellés originaux
+// de l'API TMDB plutôt que les traductions françaises.
 var TvGenreMap = map[int]string{
 	10759: "Action & Adventure",
 	16:    "Animation",
@@ -153,6 +190,10 @@ var TvGenreMap = map[int]string{
 	37:    "Western",
 }
 
+// GenreCategoryColor associe chaque nom de genre (en français) à une classe CSS
+// Tailwind représentant un dégradé de couleur. Ces couleurs sont utilisées pour
+// styliser les cartes de catégorie dans le frontend, chaque genre ayant sa propre
+// identité visuelle (par exemple "Horreur" utilise un dégradé rouge foncé vers noir).
 var GenreCategoryColor = map[string]string{
 	"Action":          "from-red-600 to-red-800",
 	"Aventure":        "from-orange-500 to-amber-600",
@@ -175,14 +216,26 @@ var GenreCategoryColor = map[string]string{
 	"Western":         "from-orange-300 to-amber-500",
 }
 
+// Caches globaux de l'application. Chaque variable est un cache typé avec une durée
+// de vie (TTL) spécifique. Ils permettent de réduire les appels répétés aux API
+// externes (TMDB) en stockant temporairement les résultats en mémoire.
 var (
-	PopularMoviesCache   = cache.New[popularMoviesCacheKey, []MovieDTO](30 * time.Minute)
-	TopRatedMoviesCache  = cache.New[topRatedMoviesCacheKey, []MovieDTO](30 * time.Minute)
-	TrendingMoviesCache  = cache.New[trendingMoviesCacheKey, []MovieDTO](15 * time.Minute)
-	ContentDetailsCache  = cache.New[ContentDetailsCacheKey, *ContentDetailsDTO](60 * time.Minute)
-	SimilarMoviesCache   = cache.New[similarMoviesCacheKey, []MovieDTO](30 * time.Minute)
-	MovieCreditsCache    = cache.New[movieCreditsCacheKey, *MovieCreditsDTO](60 * time.Minute)
-	MovieImdbIDCache     = cache.New[movieImdbIDCacheKey, TmdbMovieImdbId](60 * time.Minute)
+	// PopularMoviesCache met en cache les films populaires pendant 30 minutes.
+	PopularMoviesCache = cache.New[popularMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	// TopRatedMoviesCache met en cache les films les mieux notés pendant 30 minutes.
+	TopRatedMoviesCache = cache.New[topRatedMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	// TrendingMoviesCache met en cache les films tendance pendant 15 minutes (TTL plus court car les tendances changent vite).
+	TrendingMoviesCache = cache.New[trendingMoviesCacheKey, []MovieDTO](15 * time.Minute)
+	// ContentDetailsCache met en cache les détails d'un contenu (film ou série) pendant 60 minutes.
+	ContentDetailsCache = cache.New[ContentDetailsCacheKey, *ContentDetailsDTO](60 * time.Minute)
+	// SimilarMoviesCache met en cache les films similaires pendant 30 minutes.
+	SimilarMoviesCache = cache.New[similarMoviesCacheKey, []MovieDTO](30 * time.Minute)
+	// MovieCreditsCache met en cache les crédits (casting, réalisateur) d'un film pendant 60 minutes.
+	MovieCreditsCache = cache.New[movieCreditsCacheKey, *MovieCreditsDTO](60 * time.Minute)
+	// MovieImdbIDCache met en cache l'identifiant IMDB d'un film pendant 60 minutes.
+	MovieImdbIDCache = cache.New[movieImdbIDCacheKey, TmdbMovieImdbId](60 * time.Minute)
+	// GenreCategoriesCache met en cache la liste des catégories de genres pendant 24 heures (données rarement modifiées).
 	GenreCategoriesCache = cache.New[genreCategoriesCacheKey, []CategoryDTO](24 * time.Hour)
-	MoviesByGenreCache   = cache.New[MovieGenreCacheKey, []MovieDTO](30 * time.Minute)
+	// MoviesByGenreCache met en cache les films filtrés par genre pendant 30 minutes.
+	MoviesByGenreCache = cache.New[MovieGenreCacheKey, []MovieDTO](30 * time.Minute)
 )

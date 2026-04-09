@@ -21,38 +21,54 @@ import (
 // CACHE KEYS
 // ============================================================================
 
+// popularMoviesCacheKey est la clé de cache pour les films populaires,
+// discriminée par numéro de page et langue.
 type popularMoviesCacheKey struct {
 	page     string
 	language string
 }
 
+// topRatedMoviesCacheKey est la clé de cache pour les films les mieux notés,
+// discriminée par numéro de page.
 type topRatedMoviesCacheKey struct {
 	page int
 }
 
+// trendingMoviesCacheKey est la clé de cache pour les films tendances,
+// discriminée par fenêtre temporelle (day/week), page et langue.
 type trendingMoviesCacheKey struct {
 	timeWindow string
 	page       int
 	language   string
 }
 
+// contentDetailsCacheKey est la clé de cache pour les détails d'un contenu,
+// discriminée par identifiant TMDB du film.
 type contentDetailsCacheKey struct {
 	movieID int
 }
 
+// similarMoviesCacheKey est la clé de cache pour les films similaires,
+// discriminée par identifiant TMDB du film et numéro de page.
 type similarMoviesCacheKey struct {
 	movieID int
 	page    string
 }
 
+// movieCreditsCacheKey est la clé de cache pour le casting et l'équipe technique,
+// discriminée par identifiant TMDB du film.
 type movieCreditsCacheKey struct {
 	movieID int
 }
 
+// movieImdbIDCacheKey est la clé de cache pour l'identifiant IMDb d'un film ou d'une série,
+// discriminée par identifiant TMDB.
 type movieImdbIDCacheKey struct {
 	movieID int
 }
 
+// genreCategoriesCacheKey est la clé de cache pour la liste des catégories de genres,
+// discriminée par langue.
 type genreCategoriesCacheKey struct {
 	language string
 }
@@ -61,14 +77,25 @@ type genreCategoriesCacheKey struct {
 // CACHES
 // ============================================================================
 
+// Caches en mémoire pour les réponses de l'API TMDB.
+// Chaque cache est typé génériquement avec sa clé et sa valeur,
+// et possède un TTL (durée de vie) adapté à la fréquence de mise à jour des données.
 var (
-	popularMoviesCache   = cache.New[popularMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
-	topRatedMoviesCache  = cache.New[topRatedMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
-	trendingMoviesCache  = cache.New[trendingMoviesCacheKey, []models.MovieDTO](15 * time.Minute)
-	contentDetailsCache  = cache.New[contentDetailsCacheKey, *models.ContentDetailsDTO](60 * time.Minute)
-	similarMoviesCache   = cache.New[similarMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
-	movieCreditsCache    = cache.New[movieCreditsCacheKey, *models.MovieCreditsDTO](60 * time.Minute)
-	movieImdbIDCache     = cache.New[movieImdbIDCacheKey, models.TmdbMovieImdbId](60 * time.Minute)
+	// popularMoviesCache met en cache les films populaires (TTL : 30 min).
+	popularMoviesCache = cache.New[popularMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	// topRatedMoviesCache met en cache les films les mieux notés (TTL : 30 min).
+	topRatedMoviesCache = cache.New[topRatedMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	// trendingMoviesCache met en cache les films tendances (TTL : 15 min).
+	trendingMoviesCache = cache.New[trendingMoviesCacheKey, []models.MovieDTO](15 * time.Minute)
+	// contentDetailsCache met en cache les détails complets d'un film (TTL : 60 min).
+	contentDetailsCache = cache.New[contentDetailsCacheKey, *models.ContentDetailsDTO](60 * time.Minute)
+	// similarMoviesCache met en cache les films similaires (TTL : 30 min).
+	similarMoviesCache = cache.New[similarMoviesCacheKey, []models.MovieDTO](30 * time.Minute)
+	// movieCreditsCache met en cache le casting et l'équipe technique (TTL : 60 min).
+	movieCreditsCache = cache.New[movieCreditsCacheKey, *models.MovieCreditsDTO](60 * time.Minute)
+	// movieImdbIDCache met en cache la correspondance TMDB ID → IMDb ID (TTL : 60 min).
+	movieImdbIDCache = cache.New[movieImdbIDCacheKey, models.TmdbMovieImdbId](60 * time.Minute)
+	// genreCategoriesCache met en cache les catégories de genres de films (TTL : 24 h).
 	genreCategoriesCache = cache.New[genreCategoriesCacheKey, []models.CategoryDTO](24 * time.Hour)
 )
 
@@ -76,9 +103,17 @@ var (
 // FAKE DATA (inchangé)
 // ============================================================================
 
+// generateMovies stocke la liste de films générés aléatoirement (singleton).
 var generateMovies = []models.Movie{}
+
+// generatedContentDetails stocke les détails de contenu générés aléatoirement (singleton).
 var generatedContentDetails = models.ContentDetails{}
 
+// RandomMovieList génère et retourne une liste aléatoire de films factices.
+// La liste est créée une seule fois (entre 10 et 20 films) puis mise en cache
+// dans la variable generateMovies. Les appels suivants retournent la même liste.
+// Chaque film possède un identifiant, un titre, une année, une note, des genres
+// et une image placeholder.
 func RandomMovieList() []models.Movie {
 	if len(generateMovies) > 0 {
 		return generateMovies
@@ -98,6 +133,11 @@ func RandomMovieList() []models.Movie {
 	return movies
 }
 
+// GetContentDetailsRandomized génère et retourne des détails de contenu factices.
+// Les détails sont créés une seule fois puis mis en cache dans la variable
+// generatedContentDetails. Les appels suivants retournent le même objet.
+// L'objet contient un casting aléatoire (3 à 6 acteurs), un titre, une image,
+// des genres, une durée, un synopsis et d'autres métadonnées fictives.
 func GetContentDetailsRandomized() models.ContentDetails {
 	if len(generatedContentDetails.Cast) > 0 {
 		return generatedContentDetails
@@ -136,6 +176,20 @@ func GetContentDetailsRandomized() models.ContentDetails {
 // HANDLERS
 // ============================================================================
 
+// GetPopularMovies récupère la liste des films populaires depuis l'API TMDB.
+//
+// Paramètres :
+//   - tmdbBearerToken : jeton d'authentification Bearer pour l'API TMDB (obligatoire).
+//   - imageBase : URL de base pour les affiches (par défaut "https://image.tmdb.org/t/p/w500").
+//   - genreMap : correspondance entre identifiants de genre TMDB et noms lisibles.
+//   - page : numéro de page de résultats (par défaut "1").
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
+//
+// Mise en cache : les résultats sont mis en cache par page et langue (TTL : 30 min)
+// via popularMoviesCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/popular
 func GetPopularMovies(tmdbBearerToken string, imageBase string, genreMap map[int]string, page string) ([]models.MovieDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
@@ -214,6 +268,20 @@ func GetPopularMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 	return out, nil
 }
 
+// GetTopRatedMovies récupère la liste des films les mieux notés depuis l'API TMDB.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - page : numéro de page de résultats.
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
+// Les identifiants de genre sont résolus via [models.MovieGenreMap].
+// La langue est fixée à "fr-FR".
+//
+// Mise en cache : les résultats sont mis en cache par page (TTL : 30 min)
+// via topRatedMoviesCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/top_rated
 func GetTopRatedMovies(bearerToken string, page int) ([]models.MovieDTO, error) {
 	key := topRatedMoviesCacheKey{page: page}
 	if cached, ok := topRatedMoviesCache.Get(key); ok {
@@ -269,6 +337,21 @@ func GetTopRatedMovies(bearerToken string, page int) ([]models.MovieDTO, error) 
 	return dtos, nil
 }
 
+// GetTrendingMovies récupère la liste des films tendances depuis l'API TMDB.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - timeWindow : fenêtre temporelle, "day" ou "week" (par défaut "day").
+//   - page : numéro de page de résultats (par défaut 1 si <= 0).
+//   - language : code de langue BCP 47 (par défaut "fr-FR").
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
+// Les identifiants de genre sont résolus via [models.MovieGenreMap].
+//
+// Mise en cache : les résultats sont mis en cache par fenêtre temporelle, page et langue
+// (TTL : 15 min) via trendingMoviesCache.
+//
+// Endpoint TMDB appelé : GET /3/trending/movie/{timeWindow}
 func GetTrendingMovies(bearerToken, timeWindow string, page int, language string) ([]models.MovieDTO, error) {
 	if timeWindow == "" {
 		timeWindow = "day"
@@ -342,6 +425,22 @@ func GetTrendingMovies(bearerToken, timeWindow string, page int, language string
 	return dtos, nil
 }
 
+// GetContentDetails récupère les informations détaillées d'un film depuis l'API TMDB.
+//
+// Paramètres :
+//   - tmdbBearerToken : jeton d'authentification Bearer pour l'API TMDB (obligatoire).
+//   - imageBase : URL de base pour les affiches (par défaut "https://image.tmdb.org/t/p/w500").
+//   - movieID : identifiant TMDB du film.
+//
+// Retourne un pointeur vers [models.ContentDetailsDTO] contenant le titre, l'image,
+// l'identifiant IMDb, le backdrop, l'année, les genres, la note, la durée formatée
+// (ex. "2h 15min"), le synopsis, les langues parlées et le premier producteur.
+// Retourne une erreur en cas d'échec.
+//
+// Mise en cache : les résultats sont mis en cache par movieID (TTL : 60 min)
+// via contentDetailsCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/{movieID}
 func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*models.ContentDetailsDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
@@ -444,6 +543,21 @@ func GetContentDetails(tmdbBearerToken string, imageBase string, movieID int) (*
 	return result, nil
 }
 
+// GetSimilarMovies récupère la liste des films similaires à un film donné depuis l'API TMDB.
+//
+// Paramètres :
+//   - tmdbBearerToken : jeton d'authentification Bearer pour l'API TMDB (obligatoire).
+//   - imageBase : URL de base pour les images (par défaut "https://image.tmdb.org/t/p/w500").
+//   - genreMap : correspondance entre identifiants de genre TMDB et noms lisibles.
+//   - movieID : identifiant TMDB du film de référence.
+//   - page : numéro de page de résultats (par défaut "1").
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
+//
+// Mise en cache : les résultats sont mis en cache par movieID et page (TTL : 30 min)
+// via similarMoviesCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/{movieID}/similar
 func GetSimilarMovies(tmdbBearerToken string, imageBase string, genreMap map[int]string, movieID int, page string) ([]models.MovieDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
@@ -519,6 +633,21 @@ func GetSimilarMovies(tmdbBearerToken string, imageBase string, genreMap map[int
 	return out, nil
 }
 
+// GetMovieCredits récupère le casting et l'équipe technique d'un film depuis l'API TMDB.
+//
+// Paramètres :
+//   - tmdbToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - imageBase : URL de base pour les photos de profil (par défaut "https://image.tmdb.org/t/p/w500").
+//   - movieID : identifiant TMDB du film.
+//
+// Retourne un pointeur vers [models.MovieCreditsDTO] contenant le réalisateur, le producteur,
+// le scénariste et jusqu'à 12 acteurs principaux avec leur nom, rôle et photo.
+// Retourne une erreur en cas d'échec.
+//
+// Mise en cache : les résultats sont mis en cache par movieID (TTL : 60 min)
+// via movieCreditsCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/{movieID}/credits
 func GetMovieCredits(tmdbToken string, imageBase string, movieID int) (*models.MovieCreditsDTO, error) {
 	if imageBase == "" {
 		imageBase = "https://image.tmdb.org/t/p/w500"
@@ -591,6 +720,18 @@ func GetMovieCredits(tmdbToken string, imageBase string, movieID int) (*models.M
 	return out, nil
 }
 
+// GetMovieImdbID récupère l'identifiant IMDb d'un film à partir de son identifiant TMDB.
+//
+// Paramètres :
+//   - tmdbBearerToken : jeton d'authentification Bearer pour l'API TMDB (obligatoire).
+//   - movieID : identifiant TMDB du film.
+//
+// Retourne un [models.TmdbMovieImdbId] contenant l'identifiant IMDb et une erreur éventuelle.
+//
+// Mise en cache : le résultat est mis en cache par movieID (TTL : 60 min)
+// via movieImdbIDCache.
+//
+// Endpoint TMDB appelé : GET /3/movie/{movieID}
 func GetMovieImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId, error) {
 	log.Printf("   → GetMovieImdbID: movieID=%d", movieID)
 
@@ -633,6 +774,18 @@ func GetMovieImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId
 	return tmdbRes, nil
 }
 
+// GetSeriesImdbID récupère l'identifiant IMDb d'une série à partir de son identifiant TMDB.
+//
+// Paramètres :
+//   - tmdbBearerToken : jeton d'authentification Bearer pour l'API TMDB (obligatoire).
+//   - movieID : identifiant TMDB de la série.
+//
+// Retourne un [models.TmdbMovieImdbId] contenant l'identifiant IMDb et une erreur éventuelle.
+//
+// Mise en cache : le résultat est mis en cache par movieID (TTL : 60 min)
+// via movieImdbIDCache (partagé avec GetMovieImdbID).
+//
+// Endpoint TMDB appelé : GET /3/tv/{movieID}/external_ids
 func GetSeriesImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbId, error) {
 	log.Printf("   → GetMovieImdbID: movieID=%d", movieID)
 
@@ -675,6 +828,21 @@ func GetSeriesImdbID(tmdbBearerToken string, movieID int) (models.TmdbMovieImdbI
 	return tmdbRes, nil
 }
 
+// GetMoviesByGenre récupère les films d'un genre donné depuis l'API TMDB,
+// triés par note moyenne décroissante avec un minimum de 100 votes.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - genreID : identifiant numérique du genre TMDB.
+//   - page : numéro de page de résultats.
+//   - language : code de langue BCP 47 (ex. "fr-FR").
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
+//
+// Mise en cache : les résultats sont mis en cache par genreID, page et langue
+// via [models.MoviesByGenreCache].
+//
+// Endpoint TMDB appelé : GET /3/discover/movie?with_genres={genreID}&sort_by=vote_average.desc&vote_count.gte=100
 func GetMoviesByGenre(bearerToken string, genreID int, page int, language string) ([]models.MovieDTO, error) {
 	const imageBaseURL = "https://image.tmdb.org/t/p/w500"
 
@@ -724,6 +892,21 @@ func GetMoviesByGenre(bearerToken string, genreID int, page int, language string
 	return dtos, nil
 }
 
+// GetMovieGenreCategories récupère la liste des genres de films depuis l'API TMDB
+// et les transforme en catégories avec description, lien et couleur.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - language : code de langue BCP 47 (par défaut "fr-FR" si vide).
+//
+// Retourne une tranche de [models.CategoryDTO] contenant l'identifiant, le nom,
+// la description, le lien href et la couleur de chaque genre.
+// Les couleurs sont déterminées par [models.GenreCategoryColor].
+//
+// Mise en cache : les résultats sont mis en cache par langue (TTL : 24 h)
+// via genreCategoriesCache.
+//
+// Endpoint TMDB appelé : GET /3/genre/movie/list
 func GetMovieGenreCategories(bearerToken, language string) ([]models.CategoryDTO, error) {
 	if strings.TrimSpace(language) == "" {
 		language = "fr-FR"
@@ -785,6 +968,17 @@ func GetMovieGenreCategories(bearerToken, language string) ([]models.CategoryDTO
 // REAL-DEBRID & TORRENTIO (pas de cache — requêtes transactionnelles)
 // ============================================================================
 
+// GetTorrentioMoviesStreams récupère les flux de streaming disponibles pour un film
+// via l'API Torrentio.
+//
+// Paramètres :
+//   - imdbID : identifiant IMDb du film (ex. "tt1234567").
+//
+// Retourne un pointeur vers [models.TorrentioResponse] contenant la liste des flux
+// disponibles et une erreur éventuelle.
+// Aucune mise en cache n'est effectuée (requête transactionnelle).
+//
+// API externe appelée : GET https://torrentio.strem.fun/stream/movie/{imdbID}.json
 func GetTorrentioMoviesStreams(imdbID string) (*models.TorrentioResponse, error) {
 	log.Printf("   → GetTorrentioStreams: imdbID=%s", imdbID)
 
@@ -814,6 +1008,17 @@ func GetTorrentioMoviesStreams(imdbID string) (*models.TorrentioResponse, error)
 	log.Printf("   ✅ %d streams récupérés", len(result.Streams))
 	return &result, nil
 }
+// GetTorrentioSeriesStreams récupère les flux de streaming disponibles pour une série
+// via l'API Torrentio.
+//
+// Paramètres :
+//   - imdbID : identifiant IMDb de la série (ex. "tt1234567").
+//
+// Retourne un pointeur vers [models.TorrentioResponse] contenant la liste des flux
+// disponibles et une erreur éventuelle.
+// Aucune mise en cache n'est effectuée (requête transactionnelle).
+//
+// API externe appelée : GET https://torrentio.strem.fun/stream/series/{imdbID}.json
 func GetTorrentioSeriesStreams(imdbID string) (*models.TorrentioResponse, error) {
 	log.Printf("   → GetTorrentioStreams: imdbID=%s", imdbID)
 
@@ -844,6 +1049,17 @@ func GetTorrentioSeriesStreams(imdbID string) (*models.TorrentioResponse, error)
 	return &result, nil
 }
 
+// AddMagnetRealDebrid ajoute un lien magnet au service Real-Debrid pour téléchargement.
+//
+// Paramètres :
+//   - apiKey : clé d'API Real-Debrid (utilisée comme Bearer token).
+//   - infoHash : hash BitTorrent du contenu à ajouter.
+//
+// Retourne un pointeur vers [models.RdAddMagnetResponse] contenant l'identifiant
+// du torrent créé et une erreur éventuelle.
+// Le lien magnet est construit automatiquement à partir de l'infoHash.
+//
+// API externe appelée : POST https://api.real-debrid.com/rest/1.0/torrents/addMagnet
 func AddMagnetRealDebrid(apiKey, infoHash string) (*models.RdAddMagnetResponse, error) {
 	log.Printf("   → AddMagnetRealDebrid: InfoHash=%s", infoHash)
 
@@ -875,6 +1091,16 @@ func AddMagnetRealDebrid(apiKey, infoHash string) (*models.RdAddMagnetResponse, 
 	return &result, nil
 }
 
+// SelectFilesRealDebrid sélectionne tous les fichiers d'un torrent Real-Debrid
+// pour lancer le téléchargement.
+//
+// Paramètres :
+//   - apiKey : clé d'API Real-Debrid (utilisée comme Bearer token).
+//   - torrentId : identifiant du torrent retourné par AddMagnetRealDebrid.
+//
+// Retourne une erreur en cas d'échec. Le code de retour attendu est 204 ou 200.
+//
+// API externe appelée : POST https://api.real-debrid.com/rest/1.0/torrents/selectFiles/{torrentId}
 func SelectFilesRealDebrid(apiKey, torrentId string) error {
 	log.Printf("   → SelectFilesRealDebrid: TorrentID=%s", torrentId)
 
@@ -904,6 +1130,17 @@ func SelectFilesRealDebrid(apiKey, torrentId string) error {
 	return nil
 }
 
+// GetRealDebridTorrentInfo récupère les informations et l'état d'avancement d'un torrent
+// sur le service Real-Debrid.
+//
+// Paramètres :
+//   - apiKey : clé d'API Real-Debrid (utilisée comme Bearer token).
+//   - torrentId : identifiant du torrent à interroger.
+//
+// Retourne un pointeur vers [models.RdTorrentInfo] contenant le statut et la progression
+// du téléchargement, ainsi qu'une erreur éventuelle.
+//
+// API externe appelée : GET https://api.real-debrid.com/rest/1.0/torrents/info/{torrentId}
 func GetRealDebridTorrentInfo(apiKey, torrentId string) (*models.RdTorrentInfo, error) {
 	log.Printf("   → GetRealDebridTorrentInfo: TorrentID=%s", torrentId)
 
@@ -929,6 +1166,17 @@ func GetRealDebridTorrentInfo(apiKey, torrentId string) (*models.RdTorrentInfo, 
 	return &info, nil
 }
 
+// UnrestrictRealDebridLink convertit un lien hébergeur restreint en lien de téléchargement
+// direct via le service Real-Debrid.
+//
+// Paramètres :
+//   - apiKey : clé d'API Real-Debrid (utilisée comme Bearer token).
+//   - rawLink : lien brut à dérestreindre (les backslashes échappés sont nettoyés).
+//
+// Retourne un pointeur vers [models.RdUnrestrictResponse] contenant le lien
+// de téléchargement direct et une erreur éventuelle.
+//
+// API externe appelée : POST https://api.real-debrid.com/rest/1.0/unrestrict/link
 func UnrestrictRealDebridLink(apiKey, rawLink string) (*models.RdUnrestrictResponse, error) {
 	log.Printf("   → UnrestrictRealDebridLink: RawLink=%s", rawLink)
 
@@ -964,6 +1212,27 @@ func UnrestrictRealDebridLink(apiKey, rawLink string) (*models.RdUnrestrictRespo
 // SEARCH (conserve son propre cache map existant)
 // ============================================================================
 
+// SearchMovies effectue une recherche multi-critères de films via l'API TMDB.
+//
+// Algorithme de recherche :
+//  1. Validation : au moins un paramètre parmi Query, GenresCSV ou YearsCSV doit être fourni.
+//  2. Valeurs par défaut : Page=1, Language="fr-FR", SortBy="popularity.desc".
+//  3. Itération multi-années : si plusieurs années sont spécifiées (séparées par des virgules),
+//     la recherche est exécutée indépendamment pour chaque année puis les résultats sont fusionnés.
+//     Si aucune année n'est spécifiée, une seule requête sans filtre d'année est effectuée.
+//  4. Mise en cache : pour chaque combinaison (query, année, page, langue), les résultats bruts
+//     TMDB sont mis en cache dans [models.SearchCache] avec un TTL défini par [models.CacheTTL].
+//     Le cache est protégé par [models.CacheMutex] (RWMutex).
+//  5. Filtrage par genre : si GenresCSV est fourni, seuls les films possédant TOUS les genres
+//     demandés sont conservés (intersection, via hasAllGenres).
+//  6. Filtrage par note : si Rating > 0, les films ayant une note inférieure sont exclus.
+//  7. Déduplication : un film déjà présent dans les résultats (identifié par son ID TMDB)
+//     n'est pas ajouté une seconde fois, ce qui évite les doublons entre années.
+//
+// Paramètres : [models.SearchMoviesParams] contenant BearerToken, Query, GenresCSV,
+// YearsCSV, Rating, Page, Language et SortBy.
+//
+// Retourne une tranche de [models.MovieDTO] et une erreur éventuelle.
 func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 	if p.Page <= 0 {
 		p.Page = 1
@@ -1047,6 +1316,8 @@ func SearchMovies(p models.SearchMoviesParams) ([]models.MovieDTO, error) {
 // HELPERS
 // ============================================================================
 
+// safeYear extrait les 4 premiers caractères d'une date (l'année) de manière sûre.
+// Retourne "0" si la chaîne contient moins de 4 caractères.
 func safeYear(date string) string {
 	if len(date) >= 4 {
 		return date[:4]
@@ -1054,6 +1325,8 @@ func safeYear(date string) string {
 	return "0"
 }
 
+// mapGenres convertit une tranche d'identifiants de genre TMDB en noms lisibles
+// à l'aide de [models.MovieGenreMap].
 func mapGenres(ids []int) []string {
 	genres := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -1064,6 +1337,8 @@ func mapGenres(ids []int) []string {
 	return genres
 }
 
+// splitCSV découpe une chaîne de valeurs séparées par des virgules en tranche de chaînes.
+// Retourne une tranche vide si la chaîne est vide ou ne contient que des espaces.
 func splitCSV(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return []string{}
@@ -1071,6 +1346,8 @@ func splitCSV(s string) []string {
 	return strings.Split(s, ",")
 }
 
+// parseIntsCSV analyse une chaîne de nombres entiers séparés par des virgules
+// et retourne une tranche d'entiers. Les valeurs non numériques sont ignorées.
 func parseIntsCSV(s string) []int {
 	result := []int{}
 	for _, part := range splitCSV(s) {
@@ -1081,6 +1358,8 @@ func parseIntsCSV(s string) []int {
 	return result
 }
 
+// parseGenresCSV analyse une chaîne d'identifiants de genre séparés par des virgules
+// et retourne un ensemble (map[int]bool) pour un filtrage par intersection rapide.
 func parseGenresCSV(s string) map[int]bool {
 	result := map[int]bool{}
 	for _, part := range splitCSV(s) {
@@ -1091,6 +1370,9 @@ func parseGenresCSV(s string) map[int]bool {
 	return result
 }
 
+// toMovieDTO convertit un résultat brut TMDB ([models.TMDBMovieRaw]) en [models.MovieDTO]
+// en extrayant l'année depuis la date de sortie, en construisant l'URL de l'affiche
+// et en résolvant les identifiants de genre via [models.MovieGenreMap].
 func toMovieDTO(m models.TMDBMovieRaw) models.MovieDTO {
 	year := 0
 	if len(m.ReleaseDate) >= 4 {
@@ -1118,11 +1400,17 @@ func toMovieDTO(m models.TMDBMovieRaw) models.MovieDTO {
 	}
 }
 
+// buildCacheKey construit une clé de cache textuelle pour la recherche de films
+// à partir des paramètres de recherche et de l'année. Le format est
+// "q={query}|y={year}|page={page}|lang={language}".
 func buildCacheKey(p models.SearchMoviesParams, year int) string {
 	return fmt.Sprintf("q=%s|y=%d|page=%d|lang=%s",
 		strings.TrimSpace(p.Query), year, p.Page, p.Language)
 }
 
+// hasAllGenres vérifie qu'un film possède tous les genres demandés.
+// Retourne true si chaque identifiant de genre présent dans wanted est également
+// présent dans movieGenres (test d'inclusion / intersection complète).
 func hasAllGenres(movieGenres []int, wanted map[int]bool) bool {
 	movieSet := make(map[int]bool, len(movieGenres))
 	for _, id := range movieGenres {
@@ -1136,6 +1424,10 @@ func hasAllGenres(movieGenres []int, wanted map[int]bool) bool {
 	return true
 }
 
+// fetchMoviesPage effectue un appel à l'API TMDB pour récupérer une page de résultats bruts.
+// Si HasQuery est vrai, l'endpoint /3/search/movie est utilisé avec le paramètre query.
+// Sinon, l'endpoint /3/discover/movie est utilisé avec les filtres genre, tri et année.
+// Retourne la tranche de [models.TMDBMovieRaw] contenue dans la réponse et une erreur éventuelle.
 func fetchMoviesPage(p models.FetchParams) ([]models.TMDBMovieRaw, error) {
 	var endpoint *url.URL
 
@@ -1189,10 +1481,12 @@ func fetchMoviesPage(p models.FetchParams) ([]models.TMDBMovieRaw, error) {
 	return decoded.Results, nil
 }
 
+// genreDescription retourne une description par défaut en français pour un genre donné.
 func genreDescription(name string) string {
 	return "Découvrez les meilleurs films du genre " + name + "."
 }
 
+// genreHref construit le chemin URL relatif vers la page d'un genre à partir de son identifiant.
 func genreHref(id int) string {
 	return "/genres/" + strconv.Itoa(id)
 }
