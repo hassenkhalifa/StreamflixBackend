@@ -13,6 +13,33 @@ import (
 	"time"
 )
 
+// ConvertToDASHLive convertit une source vidéo en flux MPEG-DASH en mode "live"
+// (non-bloquant). La commande FFmpeg est lancée en arrière-plan et la fonction
+// retourne dès que le fichier manifeste (manifest.mpd) est créé sur le disque.
+//
+// Paramètres FFmpeg utilisés :
+//   - -y                     : écrase les fichiers existants sans confirmation
+//   - -i inputURL            : URL source de la vidéo à transcoder
+//   - -map 0:v:0 / -map 0:a:0 : sélectionne le premier flux vidéo et audio
+//   - -c:v libx264           : encodeur vidéo H.264 logiciel
+//   - -preset veryfast       : compromis vitesse/qualité (plus rapide qu'ultrafast en qualité)
+//   - -profile:v main        : profil H.264 Main (compatibilité large)
+//   - -level 4.0             : niveau H.264 4.0 (supporte 1080p@30fps)
+//   - -crf 23                : qualité constante (échelle 0-51, 23 = défaut équilibré)
+//   - -pix_fmt yuv420p       : format pixel standard pour la compatibilité maximale
+//   - -g 48                  : taille du GOP (Group of Pictures) = 48 images
+//   - -sc_threshold 0        : désactive la détection de changement de scène pour un GOP régulier
+//   - -c:a aac               : encodeur audio AAC
+//   - -ac 2                  : mixage stéréo (2 canaux)
+//   - -b:a 128k              : débit audio 128 kbps
+//   - -f dash                : format de sortie MPEG-DASH
+//   - -seg_duration 4        : durée des segments de 4 secondes
+//   - -use_template 1        : utilise un modèle pour les noms de segments
+//   - -use_timeline 1        : utilise une timeline dans le manifeste MPD
+//   - -adaptation_sets       : définit les ensembles d'adaptation (vidéo=0, audio=1)
+//
+// Le processus FFmpeg continue en arrière-plan via une goroutine. La fonction
+// attend jusqu'à 15 secondes (30 x 500ms) que le manifeste soit créé avant de retourner.
 func ConvertToDASHLive(inputURL, outDir string) (string, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err
@@ -84,6 +111,20 @@ func ConvertToDASHLive(inputURL, outDir string) (string, error) {
 	return manifestPath, nil
 }
 
+// ConvertToDASHVOD convertit une source vidéo en flux MPEG-DASH en mode VOD
+// (Video On Demand). Contrairement à ConvertToDASHLive, cette fonction est
+// synchrone et attend la fin complète du transcodage avant de retourner.
+//
+// Paramètres FFmpeg utilisés (en plus de ceux de ConvertToDASHLive) :
+//   - -keyint_min 48          : intervalle minimum entre les keyframes (identique à -g)
+//   - -ar 48000               : fréquence d'échantillonnage audio de 48 kHz
+//   - -init_seg_name          : modèle de nommage du segment d'initialisation (init-$RepresentationID$.m4s)
+//   - -media_seg_name         : modèle de nommage des segments média (chunk-$RepresentationID$-$Number%05d$.m4s)
+//   - -single_file 0          : produit des segments séparés (pas un fichier unique)
+//
+// Le mode VOD est adapté aux fichiers complets déjà téléchargés, car il produit
+// un manifeste DASH statique avec tous les segments référencés dès le départ.
+// Vérifie l'existence du manifeste après le transcodage et retourne une erreur si absent.
 func ConvertToDASHVOD(inputURL, outDir string) (string, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err
@@ -153,6 +194,12 @@ func ConvertToDASHVOD(inputURL, outDir string) (string, error) {
 	return manifestPath, nil
 }
 
+// GetVideoResolution utilise ffprobe pour extraire la résolution (largeur x hauteur)
+// du premier flux vidéo trouvé dans le fichier spécifié. La commande ffprobe est
+// exécutée avec une sortie JSON silencieuse (-v quiet -print_format json -show_streams).
+// Parcourt les flux retournés et retourne la résolution du premier flux de type "video"
+// ayant une largeur et une hauteur positives. Retourne une erreur si aucun flux
+// vidéo valide n'est trouvé dans le fichier.
 func GetVideoResolution(filePath string) (*models.VideoResolution, error) {
 	// Commande ffprobe pour obtenir les métadonnées en JSON
 	cmd := exec.Command("ffprobe",
@@ -187,6 +234,11 @@ func GetVideoResolution(filePath string) (*models.VideoResolution, error) {
 	return nil, fmt.Errorf("no video stream found")
 }
 
+// GetAudioTrackDetails utilise ffprobe pour extraire les détails de toutes les
+// pistes audio présentes dans le fichier spécifié. Pour chaque flux audio trouvé,
+// la fonction extrait l'index du flux et la langue (via les tags de métadonnées).
+// La commande ffprobe est exécutée avec les mêmes paramètres que GetVideoResolution.
+// Retourne une liste d'AudioTrackDetail contenant l'index et la langue de chaque piste.
 func GetAudioTrackDetails(filePath string) ([]models.AudioTrackDetail, error) {
 	// Commande ffprobe pour obtenir les métadonnées en JSON
 	cmd := exec.Command("ffprobe",
@@ -223,7 +275,11 @@ func GetAudioTrackDetails(filePath string) ([]models.AudioTrackDetail, error) {
 	return audioTrackDetails, nil
 }
 
-// getLanguageFromTags extrait la langue des tags ou retourne une valeur par défaut
+// getLanguageFromTags extrait la langue d'un flux audio à partir de ses tags
+// de métadonnées ffprobe. La fonction essaie plusieurs variantes de casse pour
+// la clé "language" (minuscules, majuscules, capitalisée) afin de gérer les
+// différents encodeurs et formats de conteneurs. Si aucune clé n'est trouvée
+// ou si les tags sont nil, retourne un message par défaut incluant l'index du flux.
 func getLanguageFromTags(tags map[string]interface{}, index int) string {
 	if tags == nil {
 		return fmt.Sprintf("Unknown language for stream %d", index)

@@ -14,12 +14,29 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-// ZtParserService wraps models.ZtParser to add methods in this package
+// ZtParserService encapsule models.ZtParser pour y ajouter des méthodes métier
+// dans le package handlers.
+//
+// Ce service gère le scraping du site Zone Téléchargement, la recherche de contenus,
+// l'extraction des liens de téléchargement et l'enrichissement des données via
+// les API externes TMDB et TVMaze. Il implémente un mécanisme de rate-limiting
+// interne pour respecter les limites du site cible.
 type ZtParserService struct {
 	*models.ZtParser
 }
 
-// NewZtParser crée une nouvelle instance du parser
+// NewZtParser crée et initialise une nouvelle instance de ZtParserService.
+//
+// Le parser est configuré avec les catégories par défaut ("films", "series"),
+// un mécanisme de rate-limiting basé sur requestTimeInBetween, et un jeton
+// TMDB pour l'enrichissement des métadonnées.
+//
+// Paramètres :
+//   - devMode : active le mode développement (logs détaillés sur stdout).
+//   - requestTimeInBetween : délai minimum entre deux requêtes HTTP vers le site cible.
+//   - moviesDbToken : clé API TMDB pour l'authentification aux services de métadonnées.
+//
+// Retourne un pointeur vers le ZtParserService initialisé.
 func NewZtParser(devMode bool, requestTimeInBetween time.Duration, moviesDbToken string) *ZtParserService {
 	parser := &models.ZtParser{
 		BaseUrl:              "",
@@ -37,19 +54,27 @@ func NewZtParser(devMode bool, requestTimeInBetween time.Duration, moviesDbToken
 	return &ZtParserService{ZtParser: parser}
 }
 
-// GetBaseUrl retourne l'URL de base
+// GetBaseUrl retourne l'URL de base du site Zone Téléchargement.
+//
+// L'accès est protégé par un mutex pour garantir la sécurité en contexte concurrent.
 func (p *ZtParserService) GetBaseUrl() string {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 	return p.BaseUrl
 }
 
-// GetAllCategories retourne toutes les catégories
+// GetAllCategories retourne la liste de toutes les catégories de contenu supportées.
+//
+// Les catégories par défaut sont "films" et "series".
 func (p *ZtParserService) GetAllCategories() []string {
 	return p.AllCategories
 }
 
-// SetRequestTimeInBetween définit le délai entre les requêtes
+// SetRequestTimeInBetween définit le délai minimum entre deux requêtes HTTP successives.
+//
+// Ce mécanisme de rate-limiting protège contre un blocage par le site cible.
+// La valeur doit être positive ; une valeur négative provoque une erreur.
+// L'accès est protégé par un mutex pour garantir la sécurité en contexte concurrent.
 func (p *ZtParserService) SetRequestTimeInBetween(value time.Duration) error {
 	if value < 0 {
 		return fmt.Errorf("value must be positive")
@@ -60,21 +85,30 @@ func (p *ZtParserService) SetRequestTimeInBetween(value time.Duration) error {
 	return nil
 }
 
-// SetDevMode active/désactive le mode dev
+// SetDevMode active ou désactive le mode développement.
+//
+// En mode développement, le service affiche des logs détaillés sur stdout
+// (rate-limiting, chargement DOM, erreurs). L'accès est thread-safe.
 func (p *ZtParserService) SetDevMode(value bool) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 	p.DevMode = value
 }
 
-// SetMoviesDbToken définit le token TMDB
+// SetMoviesDbToken définit la clé API TMDB utilisée pour l'enrichissement des métadonnées.
+//
+// L'accès est protégé par un mutex pour garantir la sécurité en contexte concurrent.
 func (p *ZtParserService) SetMoviesDbToken(value string) {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
 	p.MoviesDbKey = value
 }
 
-// UseBaseUrl définit l'URL de base
+// UseBaseUrl définit l'URL de base du site Zone Téléchargement.
+//
+// Cette URL est utilisée comme préfixe pour toutes les requêtes de scraping.
+// En mode développement, l'URL définie est affichée sur stdout.
+// Retourne toujours true pour indiquer le succès de l'opération.
 func (p *ZtParserService) UseBaseUrl(urlStr string) bool {
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
@@ -85,7 +119,17 @@ func (p *ZtParserService) UseBaseUrl(urlStr string) bool {
 	return true
 }
 
-// GetPayloadUrlFromQuery construit l'URL de recherche
+// GetPayloadUrlFromQuery construit l'URL de recherche pour le site Zone Téléchargement.
+//
+// L'URL générée suit le format : {baseUrl}/?p={category}&search={query}&page={page}.
+// La catégorie est normalisée en minuscules et validée contre la liste des catégories autorisées.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche (sera encodé URL).
+//   - page : numéro de page (doit être >= 1).
+//
+// Retourne l'URL construite ou une erreur si la catégorie est invalide ou la page < 1.
 func (p *ZtParserService) GetPayloadUrlFromQuery(category, query string, page int) (string, error) {
 	if page < 1 {
 		return "", fmt.Errorf("page must be >= 1")
@@ -114,7 +158,19 @@ func (p *ZtParserService) GetPayloadUrlFromQuery(category, query string, page in
 	), nil
 }
 
-// GetDomElementFromUrl récupère et parse le DOM d'une URL
+// GetDomElementFromUrl récupère le contenu HTML d'une URL et le parse en document DOM.
+//
+// Cette méthode implémente un mécanisme de rate-limiting : si le délai minimum
+// entre deux requêtes (RequestTimeInBetween) n'est pas écoulé, elle attend
+// automatiquement avant d'effectuer la requête. Le timeout HTTP est de 15 secondes.
+//
+// Le document retourné est un objet goquery.Document permettant la navigation
+// et l'extraction de données du DOM avec des sélecteurs CSS.
+//
+// Paramètres :
+//   - urlStr : URL complète de la page à charger.
+//
+// Retourne le document DOM parsé ou une erreur en cas d'échec HTTP ou de parsing.
 func (p *ZtParserService) GetDomElementFromUrl(urlStr string) (*goquery.Document, error) {
 	p.Mu.Lock()
 
@@ -164,7 +220,20 @@ func (p *ZtParserService) GetDomElementFromUrl(urlStr string) (*goquery.Document
 	return doc, nil
 }
 
-// ParseMoviesFromSearchQuery parse les résultats de recherche
+// ParseMoviesFromSearchQuery effectue le scraping des résultats de recherche
+// depuis le site Zone Téléchargement.
+//
+// Elle construit l'URL de recherche, charge le DOM, puis extrait pour chaque
+// élément de résultat : le titre, l'URL, l'identifiant, l'image, la qualité,
+// la langue et la date de publication. Les sélecteurs CSS utilisés ciblent
+// la structure HTML du site (#dle-content .cover_global).
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche.
+//   - page : numéro de page de résultats (>= 1).
+//
+// Retourne une slice de SearchResult ou une slice vide si aucun résultat n'est trouvé.
 func (p *ZtParserService) ParseMoviesFromSearchQuery(category, query string, page int) ([]models.SearchResult, error) {
 	payloadUrl, err := p.GetPayloadUrlFromQuery(category, query, page)
 	if err != nil {
@@ -227,7 +296,18 @@ func (p *ZtParserService) ParseMoviesFromSearchQuery(category, query string, pag
 	return responseMovieList, nil
 }
 
-// Search effectue une recherche sur une page spécifique
+// Search effectue une recherche de contenu sur une page spécifique.
+//
+// C'est un wrapper autour de ParseMoviesFromSearchQuery qui gère les erreurs
+// en retournant un ErrorResponse en cas d'échec. En mode développement,
+// les erreurs sont également affichées sur stdout.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche.
+//   - page : numéro de page de résultats (>= 1).
+//
+// Retourne les résultats de recherche ([]SearchResult) ou un ErrorResponse en cas d'erreur.
 func (p *ZtParserService) Search(category, query string, page int) (interface{}, error) {
 	results, err := p.ParseMoviesFromSearchQuery(category, query, page)
 	if err != nil {
@@ -242,7 +322,20 @@ func (p *ZtParserService) Search(category, query string, page int) (interface{},
 	return results, nil
 }
 
-// SearchAll effectue une recherche sur toutes les pages
+// SearchAll effectue une recherche exhaustive sur toutes les pages disponibles.
+//
+// Elle itère page par page en appelant ParseMoviesFromSearchQuery jusqu'à ce
+// qu'une page retourne zéro résultat, puis agrège tous les résultats dans
+// une seule slice. Chaque page chargée respecte le rate-limiting configuré.
+//
+// Attention : cette méthode peut être lente si le nombre de pages est élevé,
+// car chaque page nécessite une requête HTTP distincte avec un délai de rate-limiting.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche.
+//
+// Retourne la liste complète des résultats ou un ErrorResponse en cas d'erreur.
 func (p *ZtParserService) SearchAll(category, query string) (interface{}, error) {
 	var responseMovieList []models.SearchResult
 	searchPage := 0
@@ -271,7 +364,23 @@ func (p *ZtParserService) SearchAll(category, query string) (interface{}, error)
 	return responseMovieList, nil
 }
 
-// GetMovieNameFromId récupère les informations de base depuis ZT
+// GetMovieNameFromId récupère les informations de base d'un film ou d'une série
+// depuis le site Zone Téléchargement à partir de son identifiant.
+//
+// Elle charge la page de détail du contenu, puis extrait via des expressions
+// régulières : le titre, le titre original, la qualité, la langue, la taille
+// du fichier et les liens de téléchargement par hébergeur.
+//
+// Le comportement diffère selon la catégorie :
+//   - "films" (converti en "film") : extrait qualité, langue, taille et liens directs.
+//   - "series" (converti en "serie") : extrait la taille par épisode et les liens
+//     organisés par épisode et par hébergeur.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - id : identifiant numérique du contenu sur Zone Téléchargement.
+//
+// Retourne un ZtBasicInfo contenant les métadonnées et liens, ou une erreur.
 func (p *ZtParserService) GetMovieNameFromId(category, id string) (*models.ZtBasicInfo, error) {
 	// Conversion de la catégorie
 	if category == "films" {
@@ -376,7 +485,12 @@ func (p *ZtParserService) GetMovieNameFromId(category, id string) (*models.ZtBas
 	return info, nil
 }
 
-// TheMovieDbAuthentication vérifie l'authentification TMDB
+// TheMovieDbAuthentication vérifie que la clé API TMDB configurée est valide.
+//
+// Elle effectue une requête vers l'endpoint /authentication/token/new de TMDB.
+// En mode développement, le corps de la réponse est affiché sur stdout.
+//
+// Retourne true si l'authentification réussit (HTTP 200), false sinon.
 func (p *ZtParserService) TheMovieDbAuthentication() bool {
 	urlStr := fmt.Sprintf("https://api.themoviedb.org/3/authentication/token/new?api_key=%s", p.MoviesDbKey)
 
@@ -398,7 +512,22 @@ func (p *ZtParserService) TheMovieDbAuthentication() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// GetMovieDatas récupère les détails complets d'un film
+// GetMovieDatas récupère les détails complets d'un film en combinant les données
+// du site Zone Téléchargement et de l'API TMDB.
+//
+// Le processus est le suivant :
+//  1. Vérification de l'authentification TMDB.
+//  2. Récupération des informations de base depuis ZT (titre, liens).
+//  3. Recherche du film sur TMDB par titre pour obtenir les métadonnées enrichies.
+//  4. Récupération de la liste des genres et des crédits (réalisateurs, acteurs).
+//  5. Assemblage de toutes les données dans un MovieDetails.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films").
+//   - id : identifiant numérique du contenu sur Zone Téléchargement.
+//
+// Retourne un MovieDetails complet ou une erreur si l'authentification, le scraping
+// ou un appel API échoue.
 func (p *ZtParserService) GetMovieDatas(category, id string) (*models.MovieDetails, error) {
 	if !p.TheMovieDbAuthentication() {
 		return nil, fmt.Errorf("error while trying to authenticate to TheMovieDB API")
@@ -509,7 +638,22 @@ func (p *ZtParserService) GetMovieDatas(category, id string) (*models.MovieDetai
 	return data, nil
 }
 
-// GetSeriesData récupère les détails complets d'une série
+// GetSeriesData récupère les détails complets d'une série en combinant les données
+// du site Zone Téléchargement et de l'API TVMaze.
+//
+// Le processus est le suivant :
+//  1. Récupération des informations de base depuis ZT (titre original, liens).
+//  2. Recherche de la série sur TVMaze par titre original.
+//  3. Récupération des détails de la série, du casting et de l'équipe technique.
+//  4. Extraction des producteurs exécutifs comme "réalisateurs".
+//  5. Nettoyage du résumé HTML (suppression des balises <p>).
+//  6. Assemblage de toutes les données dans un SeriesDetails.
+//
+// Paramètres :
+//   - category : catégorie de contenu ("series").
+//   - id : identifiant numérique du contenu sur Zone Téléchargement.
+//
+// Retourne un SeriesDetails complet ou une erreur si le scraping ou un appel API échoue.
 func (p *ZtParserService) GetSeriesData(category, id string) (*models.SeriesDetails, error) {
 	ztData, err := p.GetMovieNameFromId(category, id)
 	if err != nil {
@@ -616,7 +760,16 @@ func (p *ZtParserService) GetSeriesData(category, id string) (*models.SeriesDeta
 	return data, nil
 }
 
-// GetQueryDatas récupère les détails selon le type (film ou série)
+// GetQueryDatas est le point d'entrée unifié pour récupérer les détails d'un contenu.
+//
+// Elle délègue vers GetSeriesData si la catégorie est "series", ou vers
+// GetMovieDatas pour toute autre catégorie (typiquement "films").
+//
+// Paramètres :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - id : identifiant numérique du contenu sur Zone Téléchargement.
+//
+// Retourne un MovieDetails ou SeriesDetails selon la catégorie, ou une erreur.
 func (p *ZtParserService) GetQueryDatas(category, id string) (interface{}, error) {
 	if category == "series" {
 		return p.GetSeriesData(category, id)

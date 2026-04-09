@@ -7,8 +7,35 @@ import (
 	"github.com/brianvoe/gofakeit/v7"
 )
 
+// generatedUserListItem est un cache en mémoire pour les éléments de liste utilisateur.
+// Une fois générés lors du premier appel à GetUserListItems, les éléments sont stockés
+// ici afin d'être retournés directement lors des appels suivants (pattern singleton).
 var generatedUserListItem = []models.UserListItem{}
 
+// GetUserListItems génère et retourne une liste fictive d'éléments de la bibliothèque utilisateur.
+//
+// Cette fonction utilise un cache interne (generatedUserListItem) : si les éléments ont déjà
+// été générés lors d'un appel précédent, le cache est retourné immédiatement sans régénération.
+//
+// Lors de la première invocation, entre 5 et 15 éléments sont créés aléatoirement via gofakeit.
+// Chaque élément représente un film ou une série TV et contient :
+//   - un identifiant séquentiel (à partir de 1),
+//   - un identifiant de contenu aléatoire (100 à 999),
+//   - un type de contenu ("movie" ou "tvshow"),
+//   - un titre de film fictif, une image placeholder (picsum.photos), une description,
+//   - un sous-titre formaté (ex. "Film - 2023" ou "Série - S3 E7"),
+//   - une durée formatée (ex. "2h 15min" pour un film, "52min" pour une série),
+//   - un pourcentage de progression aléatoire (0 à 100) avec le temps courant et total calculés,
+//   - des liens de lecture (playHref) et de favori (favoriteHref),
+//   - une catégorie parmi "favorites", "history" ou "watchlist".
+//
+// Pour les films, la durée est entre 1h et 3h. Pour les séries, entre 40 et 65 minutes.
+// Le temps courant (currentTime) est calculé proportionnellement au pourcentage de progression.
+//
+// Aucun paramètre n'est requis.
+//
+// Retourne un slice de [models.UserListItem]. Cette fonction ne retourne pas d'erreur ;
+// toutes les données sont fictives (mock).
 func GetUserListItems() []models.UserListItem {
 	if len(generatedUserListItem) > 0 {
 		return generatedUserListItem

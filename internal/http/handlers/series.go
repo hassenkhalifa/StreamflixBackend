@@ -11,6 +11,18 @@ import (
 	"sync"
 )
 
+// GetTrendingTV récupère les séries TV en tendance depuis l'API TMDB.
+//
+// Elle appelle l'endpoint /trending/tv/{timeWindow} de TMDB et convertit
+// les résultats bruts en une liste de TVDTO exploitable par le frontend.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - timeWindow : fenêtre temporelle ("day" ou "week"). Défaut : "day".
+//   - page : numéro de page de résultats (>= 1). Défaut : 1.
+//   - language : code langue BCP 47 (ex. "fr-FR"). Défaut : "fr-FR".
+//
+// Retourne une slice de TVDTO ou une erreur si la requête ou le décodage échoue.
 func GetTrendingTV(bearerToken, timeWindow string, page int, language string) ([]models.TVDTO, error) {
 	if timeWindow == "" {
 		timeWindow = "day"
@@ -84,6 +96,18 @@ func GetTrendingTV(bearerToken, timeWindow string, page int, language string) ([
 	return dtos, nil
 }
 
+// GetTVByGenre récupère les séries TV filtrées par genre depuis l'API TMDB.
+//
+// Elle utilise l'endpoint /discover/tv avec un tri par note moyenne descendante
+// et un seuil minimum de 100 votes pour garantir la pertinence des résultats.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - genreID : identifiant numérique du genre TMDB (ex. 18 pour Drame).
+//   - page : numéro de page de résultats (>= 1).
+//   - language : code langue BCP 47 (ex. "fr-FR").
+//
+// Retourne une slice de Tvdto ou une erreur si la requête ou le décodage échoue.
 func GetTVByGenre(bearerToken string, genreID int, page int, language string) ([]models.Tvdto, error) {
 	url := fmt.Sprintf(
 		"https://api.themoviedb.org/3/discover/tv"+
@@ -147,6 +171,17 @@ func GetTVByGenre(bearerToken string, genreID int, page int, language string) ([
 	return dtos, nil
 }
 
+// GetPopularTVShows récupère les séries TV populaires depuis l'API TMDB.
+//
+// Elle appelle l'endpoint /tv/popular et transforme chaque résultat en Tvdto,
+// incluant l'image poster, l'année de première diffusion et les genres résolus.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - page : numéro de page de résultats (>= 1).
+//   - language : code langue BCP 47 (ex. "fr-FR").
+//
+// Retourne une slice de Tvdto ou une erreur si la requête ou le décodage échoue.
 func GetPopularTVShows(bearerToken string, page int, language string) ([]models.Tvdto, error) {
 	url := fmt.Sprintf(
 		"https://api.themoviedb.org/3/tv/popular?language=%s&page=%d",
@@ -205,6 +240,23 @@ func GetPopularTVShows(bearerToken string, page int, language string) ([]models.
 	return dtos, nil
 }
 
+// GetTVInfo récupère les informations détaillées d'une série TV depuis l'API TMDB.
+//
+// Cette fonction effectue plusieurs appels concurrents à l'API TMDB :
+//   - Un appel principal pour les détails de la série (avec crédits, séries similaires
+//     et classifications de contenu via append_to_response).
+//   - Un appel par saison (en parallèle via goroutines) pour récupérer les épisodes.
+//
+// Les saisons spéciales (numéro 0) sont exclues des résultats. Les saisons
+// retournées sont triées par numéro croissant via sortSeasons.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - seriesID : identifiant TMDB de la série.
+//   - language : code langue BCP 47 (ex. "fr-FR").
+//
+// Retourne un TVInfoResponse contenant les détails, saisons, crédits et séries
+// similaires, ou une erreur si un appel API échoue.
 func GetTVInfo(bearerToken string, seriesID int, language string) (*models.TVInfoResponse, error) {
 	detailsURL := fmt.Sprintf(
 		"https://api.themoviedb.org/3/tv/%d?language=%s&append_to_response=credits,similar,content_ratings",
@@ -397,6 +449,19 @@ func GetTVInfo(bearerToken string, seriesID int, language string) (*models.TVInf
 	}, nil
 }
 
+// tmdbGet est une fonction générique qui effectue une requête GET authentifiée
+// vers l'API TMDB et décode la réponse JSON dans le type T spécifié.
+//
+// Le paramètre de type T permet de réutiliser cette fonction pour n'importe
+// quelle structure de réponse TMDB (détails de série, détails de saison, etc.)
+// sans dupliquer le code de requête HTTP et de décodage JSON.
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - url : URL complète de l'endpoint TMDB à appeler.
+//
+// Retourne un pointeur vers le résultat décodé de type T, ou une erreur
+// si la requête HTTP ou le décodage JSON échoue.
 func tmdbGet[T any](bearerToken, url string) (*T, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -418,6 +483,10 @@ func tmdbGet[T any](bearerToken, url string) (*T, error) {
 	return &result, nil
 }
 
+// sortSeasons trie une slice de SeasonDTO par numéro de saison croissant.
+//
+// L'algorithme utilisé est un tri par insertion, adapté aux petites collections
+// comme les saisons d'une série TV. Le tri est effectué en place (in-place).
 func sortSeasons(seasons []models.SeasonDTO) {
 	for i := 1; i < len(seasons); i++ {
 		for j := i; j > 0 && seasons[j].SeasonNumber < seasons[j-1].SeasonNumber; j-- {
@@ -426,6 +495,18 @@ func sortSeasons(seasons []models.SeasonDTO) {
 	}
 }
 
+// SearchTV effectue une recherche de séries TV par mot-clé via l'API TMDB.
+//
+// Elle appelle l'endpoint /search/tv et convertit les résultats en TVSearchDTO.
+// Si aucun résultat n'est trouvé, une slice vide est retournée (pas d'erreur).
+//
+// Paramètres :
+//   - bearerToken : jeton d'authentification Bearer pour l'API TMDB.
+//   - query : terme de recherche (nom de la série).
+//   - language : code langue BCP 47 (ex. "fr-FR"). Défaut : "fr-FR".
+//   - page : numéro de page de résultats (>= 1). Défaut : 1.
+//
+// Retourne une slice de TVSearchDTO ou une erreur si la requête échoue.
 func SearchTV(bearerToken, query, language string, page int) ([]models.TVSearchDTO, error) {
 	if language == "" {
 		language = "fr-FR"
@@ -464,6 +545,11 @@ func SearchTV(bearerToken, query, language string, page int) ([]models.TVSearchD
 	return mapTVSearchToDTO(tmdbResp.Results), nil
 }
 
+// mapTVSearchToDTO convertit une slice de résultats bruts TVSearchResult de l'API TMDB
+// en une slice de TVSearchDTO exploitable par le frontend.
+//
+// Pour chaque résultat, elle extrait l'année depuis la date de première diffusion,
+// construit l'URL complète du poster et résout les identifiants de genre en noms lisibles.
 func mapTVSearchToDTO(results []models.TVSearchResult) []models.TVSearchDTO {
 	dtos := make([]models.TVSearchDTO, 0, len(results))
 	for _, r := range results {
@@ -483,6 +569,16 @@ func mapTVSearchToDTO(results []models.TVSearchResult) []models.TVSearchDTO {
 	return dtos
 }
 
+// MapGenreIDs convertit une liste d'identifiants de genre TMDB en leurs noms lisibles.
+//
+// Elle utilise la map de correspondance fournie pour résoudre chaque identifiant.
+// Les identifiants inconnus (absents de genreMap) sont silencieusement ignorés.
+//
+// Paramètres :
+//   - genreIDs : slice d'identifiants numériques de genres TMDB.
+//   - genreMap : map de correspondance identifiant -> nom du genre.
+//
+// Retourne une slice de noms de genres sous forme de chaînes de caractères.
 func MapGenreIDs(genreIDs []int, genreMap map[int]string) []string {
 	genres := make([]string, 0, len(genreIDs))
 	for _, id := range genreIDs {

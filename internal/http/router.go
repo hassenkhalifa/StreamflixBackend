@@ -1,3 +1,19 @@
+// Package http contient le routeur HTTP Gin et la configuration des routes de l'API StreamFlix.
+//
+// Ce package est responsable de :
+//   - La création et configuration du moteur Gin (mode, middleware)
+//   - L'enregistrement de toutes les routes API v1 et legacy
+//   - La liaison entre les routes et les handlers/services
+//   - Le health check endpoint
+//
+// Architecture des routes :
+//   - /health : vérification de santé du serveur
+//   - /api/v1/movies/* : endpoints films (populaires, tendances, détails, recherche)
+//   - /api/v1/tv/* : endpoints séries TV
+//   - /api/v1/player/* : endpoints lecteur vidéo
+//   - /api/v1/zt/* : endpoints Zone Téléchargement
+//   - /api/v1/user/* : endpoints utilisateur
+//   - Routes legacy : compatibilité ascendante avec les anciens endpoints
 package http
 
 import (
@@ -15,7 +31,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NewRouter creates and configures the Gin engine with all routes and middleware.
+// NewRouter crée et configure le moteur Gin avec l'ensemble des routes et middlewares.
+//
+// La configuration inclut :
+//   - Le mode Gin (debug/release) selon la configuration.
+//   - La pile de middlewares : recovery, logger, headers de sécurité, CORS et rate-limiting.
+//   - L'endpoint /health pour la vérification de santé du serveur.
+//   - L'initialisation du parser Zone Téléchargement avec rate-limiting de 2 secondes.
+//   - L'enregistrement des groupes de routes API v1 (movies, tv, player, zt, user).
+//   - L'enregistrement des routes legacy pour la compatibilité ascendante.
+//
+// Paramètres :
+//   - cfg : configuration de l'application contenant les tokens API, le mode Gin,
+//     les origines CORS et les limites de rate-limiting.
+//
+// Retourne le moteur Gin configuré, prêt à être démarré.
 func NewRouter(cfg *config.Config) *gin.Engine {
 	gin.SetMode(cfg.GinMode)
 
@@ -63,6 +93,19 @@ func NewRouter(cfg *config.Config) *gin.Engine {
 	return router
 }
 
+// registerMovieRoutes enregistre les routes du groupe /api/v1/movies.
+//
+// Routes configurées :
+//   - GET /popular : films populaires
+//   - GET /top-rated : films les mieux notés
+//   - GET /trending : films en tendance
+//   - GET /search : recherche de films
+//   - GET /by-genre : films par genre
+//   - GET /genres : liste des genres disponibles
+//   - GET /:id : détails d'un film
+//   - GET /:id/credits : crédits d'un film
+//   - GET /:id/similar : films similaires
+//   - GET /:id/imdb : identifiant IMDB d'un film
 func registerMovieRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	movies := rg.Group("/movies")
 	{
@@ -79,6 +122,14 @@ func registerMovieRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	}
 }
 
+// registerTVRoutes enregistre les routes du groupe /api/v1/tv.
+//
+// Routes configurées :
+//   - GET /trending : séries TV en tendance
+//   - GET /by-genre : séries TV par genre
+//   - GET /popular : séries TV populaires
+//   - GET /info : détails complets d'une série (avec saisons et épisodes)
+//   - GET /search : recherche de séries TV
 func registerTVRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	tv := rg.Group("/tv")
 	{
@@ -90,6 +141,11 @@ func registerTVRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	}
 }
 
+// registerPlayerRoutes enregistre les routes du groupe /api/v1/player.
+//
+// Routes configurées :
+//   - GET /movie/:id : lecteur vidéo pour un film (pipeline TMDB -> Torrentio -> Real-Debrid)
+//   - GET /series/:id/:season/:episode : lecteur vidéo pour un épisode de série
 func registerPlayerRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	player := rg.Group("/player")
 	{
@@ -98,6 +154,13 @@ func registerPlayerRoutes(rg *gin.RouterGroup, cfg *config.Config) {
 	}
 }
 
+// registerZTRoutes enregistre les routes du groupe /api/v1/zt pour Zone Téléchargement.
+//
+// Routes configurées :
+//   - GET /search : recherche paginée de contenus
+//   - GET /search-all : recherche exhaustive sur toutes les pages
+//   - GET /basic/:category/:id : informations de base d'un contenu (titre, liens)
+//   - GET /:category/:id : détails complets enrichis via TMDB/TVMaze
 func registerZTRoutes(rg *gin.RouterGroup, parser *handlers.ZtParserService) {
 	zt := rg.Group("/zt")
 	{
@@ -108,6 +171,10 @@ func registerZTRoutes(rg *gin.RouterGroup, parser *handlers.ZtParserService) {
 	}
 }
 
+// registerUserRoutes enregistre les routes du groupe /api/v1/user.
+//
+// Routes configurées :
+//   - GET /list : récupère la liste des éléments utilisateur.
 func registerUserRoutes(rg *gin.RouterGroup) {
 	user := rg.Group("/user")
 	{
@@ -117,7 +184,11 @@ func registerUserRoutes(rg *gin.RouterGroup) {
 	}
 }
 
-// registerLegacyRoutes preserves backward compatibility with old endpoints.
+// registerLegacyRoutes enregistre les anciennes routes pour assurer la compatibilité ascendante.
+//
+// Ces routes réutilisent les mêmes handlers factory que les routes v1 mais sont
+// montées directement sur le routeur racine (sans préfixe /api/v1).
+// Elles correspondent aux endpoints de la version initiale de l'API StreamFlix.
 func registerLegacyRoutes(router *gin.Engine, cfg *config.Config, parser *handlers.ZtParserService) {
 	router.GET("/movieslist", func(c *gin.Context) {
 		c.JSON(200, handlers.RandomMovieList())
@@ -171,6 +242,10 @@ func registerLegacyRoutes(router *gin.Engine, cfg *config.Config, parser *handle
 // Movie Handlers
 // ===========================================================================
 
+// moviePopularHandler retourne un handler Gin qui récupère les films populaires.
+//
+// Flux de la requête : appel TMDB /movie/popular -> conversion en DTO -> réponse JSON.
+// Aucun paramètre de query n'est requis.
 func moviePopularHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		movies, err := handlers.GetPopularMovies(cfg.TMDBToken, "", models.MovieGenreMap, "")
@@ -183,6 +258,9 @@ func moviePopularHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieTopRatedHandler retourne un handler Gin qui récupère les films les mieux notés.
+//
+// Flux de la requête : appel TMDB /movie/top_rated (page 1) -> conversion en DTO -> réponse JSON.
 func movieTopRatedHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		movies, err := handlers.GetTopRatedMovies(cfg.TMDBToken, 1)
@@ -195,6 +273,13 @@ func movieTopRatedHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieTrendingHandler retourne un handler Gin qui récupère les films en tendance.
+//
+// Paramètres de query optionnels :
+//   - time_window : "day" (défaut) ou "week".
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//
+// Flux de la requête : extraction des paramètres -> appel TMDB /trending/movie -> réponse JSON.
 func movieTrendingHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		timeWindow := c.DefaultQuery("time_window", "day")
@@ -210,6 +295,12 @@ func movieTrendingHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieDetailsHandler retourne un handler Gin qui récupère les détails d'un film.
+//
+// Paramètre de chemin requis :
+//   - :id : identifiant TMDB du film (entier).
+//
+// Flux de la requête : validation de l'ID -> appel TMDB /movie/{id} -> réponse JSON.
 func movieDetailsHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		movieID, err := strconv.Atoi(c.Param("id"))
@@ -227,6 +318,12 @@ func movieDetailsHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieCreditsHandler retourne un handler Gin qui récupère les crédits d'un film.
+//
+// Paramètre de chemin requis :
+//   - :id : identifiant TMDB du film (entier positif).
+//
+// Flux de la requête : validation de l'ID -> appel TMDB /movie/{id}/credits -> réponse JSON.
 func movieCreditsHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		movieID, err := strconv.Atoi(c.Param("id"))
@@ -244,6 +341,12 @@ func movieCreditsHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieSimilarHandler retourne un handler Gin qui récupère les films similaires à un film donné.
+//
+// Paramètre de chemin requis :
+//   - :id : identifiant TMDB du film (entier positif).
+//
+// Flux de la requête : validation de l'ID -> appel TMDB /movie/{id}/similar -> réponse JSON.
 func movieSimilarHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		movieID, err := strconv.Atoi(c.Param("id"))
@@ -261,6 +364,14 @@ func movieSimilarHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// moviesByGenreHandler retourne un handler Gin qui récupère les films filtrés par genre.
+//
+// Paramètres de query optionnels :
+//   - genre_id : identifiant du genre TMDB (défaut "28" = Action).
+//   - page : numéro de page (défaut "1").
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//
+// Flux de la requête : extraction et validation des paramètres -> appel TMDB /discover/movie -> réponse JSON.
 func moviesByGenreHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		genreIDStr := c.DefaultQuery("genre_id", "28")
@@ -282,6 +393,12 @@ func moviesByGenreHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieGenresHandler retourne un handler Gin qui récupère la liste des genres de films disponibles.
+//
+// Paramètre de query optionnel :
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//
+// Flux de la requête : appel TMDB /genre/movie/list -> réponse JSON avec la map des genres.
 func movieGenresHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		language := c.DefaultQuery("language", "fr-FR")
@@ -295,6 +412,18 @@ func movieGenresHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieSearchHandler retourne un handler Gin qui effectue une recherche avancée de films.
+//
+// Paramètres de query :
+//   - query : terme de recherche (texte libre).
+//   - genres : identifiants de genres séparés par des virgules.
+//   - years : années de sortie séparées par des virgules.
+//   - sort_by : critère de tri TMDB.
+//   - page : numéro de page (défaut "1").
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//   - rating : note minimale (défaut "0").
+//
+// Flux de la requête : extraction des paramètres -> appel TMDB /search/movie ou /discover/movie -> réponse JSON.
 func movieSearchHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pageStr := c.DefaultQuery("page", "1")
@@ -321,6 +450,13 @@ func movieSearchHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// movieImdbIDHandler retourne un handler Gin qui récupère l'identifiant IMDB d'un film
+// à partir de son identifiant TMDB.
+//
+// Paramètre de chemin requis :
+//   - :id : identifiant TMDB du film (entier).
+//
+// Flux de la requête : validation de l'ID -> appel TMDB /movie/{id}/external_ids -> réponse JSON.
 func movieImdbIDHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tmdbid, err := strconv.Atoi(c.Param("id"))
@@ -342,6 +478,14 @@ func movieImdbIDHandler(cfg *config.Config) gin.HandlerFunc {
 // TV Handlers
 // ===========================================================================
 
+// tvTrendingHandler retourne un handler Gin qui récupère les séries TV en tendance.
+//
+// Paramètres de query optionnels :
+//   - time_window : "day" (défaut) ou "week".
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//   - page : numéro de page (défaut 1).
+//
+// Flux de la requête : extraction des paramètres -> appel TMDB /trending/tv -> réponse JSON.
 func tvTrendingHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		timeWindow := c.DefaultQuery("time_window", "day")
@@ -362,6 +506,14 @@ func tvTrendingHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// tvByGenreHandler retourne un handler Gin qui récupère les séries TV filtrées par genre.
+//
+// Paramètres de query optionnels :
+//   - genre_id : identifiant du genre TMDB (défaut "18" = Drame).
+//   - page : numéro de page (défaut "1").
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//
+// Flux de la requête : extraction et validation des paramètres -> appel TMDB /discover/tv -> réponse JSON.
 func tvByGenreHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		genreIDStr := c.DefaultQuery("genre_id", "18")
@@ -388,6 +540,13 @@ func tvByGenreHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// tvPopularHandler retourne un handler Gin qui récupère les séries TV populaires.
+//
+// Paramètres de query optionnels :
+//   - language : code langue BCP 47 (défaut "fr-FR").
+//   - page : numéro de page (défaut "1").
+//
+// Flux de la requête : extraction des paramètres -> appel TMDB /tv/popular -> réponse JSON.
 func tvPopularHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		language := c.DefaultQuery("language", "fr-FR")
@@ -407,6 +566,14 @@ func tvPopularHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// tvInfoHandler retourne un handler Gin qui récupère les informations détaillées d'une série TV.
+//
+// Paramètres de query :
+//   - series_id (requis) : identifiant TMDB de la série (entier).
+//   - language (optionnel) : code langue BCP 47 (défaut "fr-FR").
+//
+// Flux de la requête : validation de series_id -> appel TMDB avec détails, saisons,
+// crédits et séries similaires en parallèle -> réponse JSON.
 func tvInfoHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Query("series_id")
@@ -430,6 +597,14 @@ func tvInfoHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// tvSearchHandler retourne un handler Gin qui effectue une recherche de séries TV par mot-clé.
+//
+// Paramètres de query :
+//   - query (requis) : terme de recherche.
+//   - language (optionnel) : code langue BCP 47 (défaut "fr-FR").
+//   - page (optionnel) : numéro de page (défaut "1").
+//
+// Flux de la requête : validation de query -> appel TMDB /search/tv -> réponse JSON.
 func tvSearchHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query := c.Query("query")
@@ -453,6 +628,19 @@ func tvSearchHandler(cfg *config.Config) gin.HandlerFunc {
 // Player Handlers
 // ===========================================================================
 
+// videoPlayerMovieHandler retourne un handler Gin qui résout un flux vidéo pour un film.
+//
+// Paramètre de chemin requis :
+//   - :id : identifiant TMDB du film (entier).
+//
+// Flux de la requête (pipeline complet) :
+//  1. Conversion de l'ID TMDB en ID IMDB via l'API TMDB.
+//  2. Récupération des streams Torrentio pour l'ID IMDB.
+//  3. Ajout du magnet du premier stream sur Real-Debrid.
+//  4. Sélection des fichiers du torrent sur Real-Debrid.
+//  5. Récupération des liens de téléchargement.
+//  6. Dé-restriction du lien et obtention de l'URL MPD.
+//  7. Construction de la réponse du lecteur vidéo.
 func videoPlayerMovieHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		imdbid, err := strconv.Atoi(c.Param("id"))
@@ -523,6 +711,19 @@ func videoPlayerMovieHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// videoPlayerSeriesHandler retourne un handler Gin qui résout un flux vidéo pour un épisode de série.
+//
+// Paramètres de chemin requis :
+//   - :id : identifiant TMDB de la série (entier).
+//   - :season : numéro de la saison.
+//   - :episode : numéro de l'épisode.
+//
+// Flux de la requête (pipeline complet) :
+//  1. Conversion de l'ID TMDB en ID IMDB via l'API TMDB.
+//  2. Construction de l'identifiant Torrentio au format "imdb_id:saison:épisode".
+//  3. Récupération des streams Torrentio pour l'épisode.
+//  4. Ajout du magnet du premier stream sur Real-Debrid.
+//  5. Sélection des fichiers, dé-restriction et construction de la réponse.
 func videoPlayerSeriesHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		imdbid, err := strconv.Atoi(c.Param("id"))
@@ -605,6 +806,16 @@ func videoPlayerSeriesHandler(cfg *config.Config) gin.HandlerFunc {
 // ZT Handlers
 // ===========================================================================
 
+// ztSearchHandler retourne un handler Gin qui effectue une recherche paginée sur Zone Téléchargement.
+//
+// Paramètres de query requis :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche.
+//
+// Paramètre de query optionnel :
+//   - page : numéro de page (défaut "1").
+//
+// Flux de la requête : validation des paramètres -> scraping ZT -> réponse JSON.
 func ztSearchHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		category := c.Query("category")
@@ -627,6 +838,15 @@ func ztSearchHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	}
 }
 
+// ztSearchAllHandler retourne un handler Gin qui effectue une recherche exhaustive
+// sur toutes les pages disponibles de Zone Téléchargement.
+//
+// Paramètres de query requis :
+//   - category : catégorie de contenu ("films" ou "series").
+//   - query : terme de recherche.
+//
+// Attention : cette requête peut être lente car elle parcourt toutes les pages
+// de résultats avec le rate-limiting configuré.
 func ztSearchAllHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		category := c.Query("category")
@@ -648,6 +868,14 @@ func ztSearchAllHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	}
 }
 
+// ztBasicHandler retourne un handler Gin qui récupère les informations de base
+// d'un contenu Zone Téléchargement (titre, titre original, liens de téléchargement).
+//
+// Paramètres de chemin requis :
+//   - :category : catégorie de contenu ("films" ou "series").
+//   - :id : identifiant numérique du contenu sur ZT.
+//
+// Flux de la requête : scraping de la page ZT -> extraction des métadonnées -> réponse JSON.
 func ztBasicHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		category := c.Param("category")
@@ -664,6 +892,14 @@ func ztBasicHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	}
 }
 
+// ztDetailsHandler retourne un handler Gin qui récupère les détails complets
+// d'un contenu Zone Téléchargement enrichi via TMDB (films) ou TVMaze (séries).
+//
+// Paramètres de chemin requis :
+//   - :category : catégorie de contenu ("films" ou "series").
+//   - :id : identifiant numérique du contenu sur ZT.
+//
+// Flux de la requête : scraping ZT -> enrichissement TMDB/TVMaze -> réponse JSON.
 func ztDetailsHandler(parser *handlers.ZtParserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		category := c.Param("category")
